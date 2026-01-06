@@ -15,6 +15,7 @@ struct YoDaAIApp: App {
             ChatThread.self,
             ChatMessage.self,
             ProviderSettings.self,
+            LLMProvider.self,
             AppPermissionRule.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)

@@ -8,6 +8,7 @@ final class ChatViewModel: ObservableObject {
     @Published var isSending: Bool = false
     @Published var lastErrorMessage: String?
     @Published var alwaysAttachAppContext: Bool = true
+    var activeThreadID: UUID?
 
     private let client: OpenAICompatibleClient
     private let accessibilityService: AccessibilityService
@@ -23,19 +24,37 @@ final class ChatViewModel: ObservableObject {
         self.permissionsStore = permissionsStore
     }
 
-    func ensureSettings(in context: ModelContext) throws -> ProviderSettings {
-        let descriptor = FetchDescriptor<ProviderSettings>()
-        if let existing = try context.fetch(descriptor).first {
-            return existing
+
+    func ensureDefaultProvider(in context: ModelContext) throws -> LLMProvider {
+        let descriptor = FetchDescriptor<LLMProvider>(sortBy: [SortDescriptor(\LLMProvider.updatedAt, order: .reverse)])
+        let providers = try context.fetch(descriptor)
+        if let existingDefault = providers.first(where: { $0.isDefault }) {
+            return existingDefault
         }
 
-        let created = ProviderSettings()
+        if let first = providers.first {
+            first.isDefault = true
+            first.updatedAt = Date()
+            try context.save()
+            return first
+        }
+
+        let created = LLMProvider()
         context.insert(created)
         try context.save()
         return created
     }
 
     func ensureThread(in context: ModelContext) throws -> ChatThread {
+        // Use the active thread if set
+        if let activeID = activeThreadID {
+            let descriptor = FetchDescriptor<ChatThread>(predicate: #Predicate { $0.id == activeID })
+            if let thread = try context.fetch(descriptor).first {
+                return thread
+            }
+        }
+
+        // Fallback to most recent thread
         let descriptor = FetchDescriptor<ChatThread>(sortBy: [SortDescriptor(\ChatThread.createdAt, order: .reverse)])
         if let existing = try context.fetch(descriptor).first {
             return existing
@@ -56,7 +75,7 @@ final class ChatViewModel: ObservableObject {
         composerText = ""
 
         do {
-            let settings = try ensureSettings(in: context)
+            let provider = try ensureDefaultProvider(in: context)
             let thread = try ensureThread(in: context)
 
             let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread)
@@ -86,15 +105,20 @@ final class ChatViewModel: ObservableObject {
             }
 
             let assistantText = try await client.createChatCompletion(
-                baseURL: settings.baseURL,
-                apiKey: settings.apiKey,
-                model: settings.model,
+                baseURL: provider.baseURL,
+                apiKey: provider.apiKey,
+                model: provider.selectedModel,
                 messages: requestMessages
             )
 
             let assistantMessage = ChatMessage(role: .assistant, content: assistantText, thread: thread)
             context.insert(assistantMessage)
-            settings.updatedAt = Date()
+            
+            // Auto-generate thread title from first user message if still "New Chat"
+            if thread.title == "New Chat" {
+                thread.title = generateThreadTitle(from: trimmed)
+            }
+            
             try context.save()
         } catch {
             lastErrorMessage = String(describing: error)
@@ -128,6 +152,23 @@ final class ChatViewModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    private func generateThreadTitle(from message: String) -> String {
+        // Take the first line or up to 40 characters
+        let firstLine = message.components(separatedBy: .newlines).first ?? message
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if trimmed.count <= 40 {
+            return trimmed
+        }
+        
+        // Truncate at word boundary if possible
+        let prefix = String(trimmed.prefix(40))
+        if let lastSpace = prefix.lastIndex(of: " ") {
+            return String(prefix[..<lastSpace]) + "..."
+        }
+        return prefix + "..."
     }
 
     private func formatAppContext(_ snapshot: AppContextSnapshot?) -> String {
