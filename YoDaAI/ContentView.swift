@@ -331,6 +331,7 @@ private struct EmptyStateView: View {
 
 // MARK: - Message List
 private struct MessageListView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var messages: [ChatMessage]
     @ObservedObject var viewModel: ChatViewModel
 
@@ -347,8 +348,17 @@ private struct MessageListView: View {
             ScrollView {
                 LazyVStack(spacing: 24) {
                     ForEach(messages) { message in
-                        MessageRowView(message: message)
-                            .id(message.id)
+                        MessageRowView(
+                            message: message,
+                            viewModel: viewModel,
+                            onRetry: {
+                                Task { await viewModel.retryFrom(message: message, in: modelContext) }
+                            },
+                            onDelete: {
+                                viewModel.deleteMessage(message, in: modelContext)
+                            }
+                        )
+                        .id(message.id)
                     }
 
                     if viewModel.isSending {
@@ -378,15 +388,19 @@ private struct MessageListView: View {
 // MARK: - Message Row
 private struct MessageRowView: View {
     let message: ChatMessage
+    @ObservedObject var viewModel: ChatViewModel
+    let onRetry: () -> Void
+    let onDelete: () -> Void
     @State private var isHovering = false
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top) {
             if message.role == .user {
                 Spacer(minLength: 60)
             }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
                 if message.role == .user {
                     // User message: right-aligned bubble
                     Text(message.content)
@@ -396,23 +410,50 @@ private struct MessageRowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                         .textSelection(.enabled)
                 } else {
-                    // Assistant message: left-aligned plain text
-                    Text(message.content)
+                    // Assistant message: Markdown rendered
+                    MarkdownTextView(content: message.content)
                         .textSelection(.enabled)
                 }
 
-                // Copy button on hover
+                // Action buttons on hover
                 if isHovering {
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(message.content, forType: .string)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        // Copy button
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(message.content, forType: .string)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Copy")
+                        
+                        // Retry button (regenerate from this point)
+                        Button {
+                            onRetry()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help(message.role == .user ? "Resend" : "Regenerate")
+                        .disabled(viewModel.isSending)
+                        
+                        // Delete button
+                        Button {
+                            showDeleteConfirmation = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Delete")
                     }
-                    .buttonStyle(.borderless)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
 
@@ -425,6 +466,145 @@ private struct MessageRowView: View {
                 isHovering = hovering
             }
         }
+        .alert("Delete Message?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                onDelete()
+            }
+        } message: {
+            Text("This message will be permanently deleted.")
+        }
+    }
+}
+
+// MARK: - Markdown Text View
+private struct MarkdownTextView: View {
+    let content: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(parseBlocks().enumerated()), id: \.offset) { _, block in
+                blockView(for: block)
+            }
+        }
+    }
+    
+    private enum Block {
+        case text(String)
+        case code(language: String?, code: String)
+    }
+    
+    private func parseBlocks() -> [Block] {
+        var blocks: [Block] = []
+        var remaining = content
+        
+        // Pattern to match code blocks: ```language\ncode\n```
+        let codeBlockPattern = "```(\\w*)\\n([\\s\\S]*?)```"
+        
+        while let regex = try? NSRegularExpression(pattern: codeBlockPattern, options: []),
+              let match = regex.firstMatch(in: remaining, options: [], range: NSRange(remaining.startIndex..., in: remaining)) {
+            
+            // Text before the code block
+            let beforeRange = remaining.startIndex..<remaining.index(remaining.startIndex, offsetBy: match.range.location)
+            let beforeText = String(remaining[beforeRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !beforeText.isEmpty {
+                blocks.append(.text(beforeText))
+            }
+            
+            // Extract language and code
+            let languageRange = Range(match.range(at: 1), in: remaining)
+            let codeRange = Range(match.range(at: 2), in: remaining)
+            
+            let language = languageRange.map { String(remaining[$0]) }
+            let code = codeRange.map { String(remaining[$0]).trimmingCharacters(in: .newlines) } ?? ""
+            
+            blocks.append(.code(language: language?.isEmpty == true ? nil : language, code: code))
+            
+            // Move past this match
+            let matchEnd = remaining.index(remaining.startIndex, offsetBy: match.range.location + match.range.length)
+            remaining = String(remaining[matchEnd...])
+        }
+        
+        // Remaining text after last code block
+        let trimmed = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            blocks.append(.text(trimmed))
+        }
+        
+        return blocks.isEmpty ? [.text(content)] : blocks
+    }
+    
+    @ViewBuilder
+    private func blockView(for block: Block) -> some View {
+        switch block {
+        case .text(let text):
+            Text(attributedString(from: text))
+                .fixedSize(horizontal: false, vertical: true)
+        case .code(let language, let code):
+            CodeBlockView(language: language, code: code)
+        }
+    }
+    
+    private func attributedString(from text: String) -> AttributedString {
+        // Try to parse as Markdown
+        if let attributed = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return attributed
+        }
+        return AttributedString(text)
+    }
+}
+
+// MARK: - Code Block View
+private struct CodeBlockView: View {
+    let language: String?
+    let code: String
+    @State private var isCopied = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header with language and copy button
+            HStack {
+                if let language, !language.isEmpty {
+                    Text(language)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                    isCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        isCopied = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        Text(isCopied ? "Copied" : "Copy")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(isCopied ? .green : .secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+            
+            // Code content
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
     }
 }
 

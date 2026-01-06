@@ -8,6 +8,7 @@ final class ChatViewModel: ObservableObject {
     @Published var isSending: Bool = false
     @Published var lastErrorMessage: String?
     @Published var alwaysAttachAppContext: Bool = true
+    @Published var streamingMessageID: UUID?  // Track the message being streamed
     var activeThreadID: UUID?
 
     private let client: OpenAICompatibleClient
@@ -82,49 +83,132 @@ final class ChatViewModel: ObservableObject {
             context.insert(userMessage)
             try context.save()
 
-            let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
-            var requestMessages = history.map { OpenAIChatMessage(role: $0.roleRawValue, content: $0.content) }
-
-            if alwaysAttachAppContext {
-                let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true)
-
-                if let snapshot {
-                    let rule = try permissionsStore.ensureRule(
-                        for: snapshot.bundleIdentifier,
-                        displayName: snapshot.appName,
-                        in: context
-                    )
-
-                    if rule.allowContext {
-                        let contextText = formatAppContext(snapshot)
-                        if !contextText.isEmpty {
-                            requestMessages.append(OpenAIChatMessage(role: "system", content: contextText))
-                        }
-                    }
-                }
-            }
-
-            let assistantText = try await client.createChatCompletion(
-                baseURL: provider.baseURL,
-                apiKey: provider.apiKey,
-                model: provider.selectedModel,
-                messages: requestMessages
-            )
-
-            let assistantMessage = ChatMessage(role: .assistant, content: assistantText, thread: thread)
-            context.insert(assistantMessage)
+            try await sendAssistantResponse(for: thread, provider: provider, in: context)
             
             // Auto-generate thread title from first user message if still "New Chat"
             if thread.title == "New Chat" {
                 thread.title = generateThreadTitle(from: trimmed)
+                try context.save()
             }
-            
-            try context.save()
         } catch {
             lastErrorMessage = String(describing: error)
         }
 
         isSending = false
+    }
+    
+    /// Retry: delete the last assistant message and regenerate
+    func retryLastResponse(in context: ModelContext) async {
+        isSending = true
+        lastErrorMessage = nil
+        
+        do {
+            let provider = try ensureDefaultProvider(in: context)
+            let thread = try ensureThread(in: context)
+            
+            // Find and delete the last assistant message
+            let sortedMessages = thread.messages.sorted { $0.createdAt < $1.createdAt }
+            if let lastAssistant = sortedMessages.last(where: { $0.role == .assistant }) {
+                context.delete(lastAssistant)
+                try context.save()
+            }
+            
+            try await sendAssistantResponse(for: thread, provider: provider, in: context)
+        } catch {
+            lastErrorMessage = String(describing: error)
+        }
+        
+        isSending = false
+    }
+    
+    /// Retry from a specific message: delete all messages after it and regenerate
+    func retryFrom(message: ChatMessage, in context: ModelContext) async {
+        guard let thread = message.thread else { return }
+        
+        isSending = true
+        lastErrorMessage = nil
+        
+        do {
+            let provider = try ensureDefaultProvider(in: context)
+            
+            // Delete all messages after this one
+            let sortedMessages = thread.messages.sorted { $0.createdAt < $1.createdAt }
+            var shouldDelete = false
+            for msg in sortedMessages {
+                if shouldDelete {
+                    context.delete(msg)
+                } else if msg.id == message.id {
+                    shouldDelete = true
+                    // If it's a user message, keep it; if assistant, delete it too
+                    if message.role == .assistant {
+                        context.delete(msg)
+                    }
+                }
+            }
+            try context.save()
+            
+            try await sendAssistantResponse(for: thread, provider: provider, in: context)
+        } catch {
+            lastErrorMessage = String(describing: error)
+        }
+        
+        isSending = false
+    }
+    
+    /// Delete a specific message
+    func deleteMessage(_ message: ChatMessage, in context: ModelContext) {
+        context.delete(message)
+        try? context.save()
+    }
+    
+    private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, in context: ModelContext) async throws {
+        let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
+        var requestMessages = history.map { OpenAIChatMessage(role: $0.roleRawValue, content: $0.content) }
+
+        if alwaysAttachAppContext {
+            let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true)
+
+            if let snapshot {
+                let rule = try permissionsStore.ensureRule(
+                    for: snapshot.bundleIdentifier,
+                    displayName: snapshot.appName,
+                    in: context
+                )
+
+                if rule.allowContext {
+                    let contextText = formatAppContext(snapshot)
+                    if !contextText.isEmpty {
+                        requestMessages.append(OpenAIChatMessage(role: "system", content: contextText))
+                    }
+                }
+            }
+        }
+
+        // Create empty assistant message for streaming
+        let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread)
+        context.insert(assistantMessage)
+        try context.save()
+        
+        // Track the streaming message
+        streamingMessageID = assistantMessage.id
+        
+        defer {
+            streamingMessageID = nil
+        }
+        
+        // Stream the response
+        let stream = client.createChatCompletionStream(
+            baseURL: provider.baseURL,
+            apiKey: provider.apiKey,
+            model: provider.selectedModel,
+            messages: requestMessages
+        )
+        
+        for try await chunk in stream {
+            assistantMessage.content += chunk
+        }
+        
+        try context.save()
     }
 
     func insertLastAssistantMessageIntoFocusedApp(in context: ModelContext) {

@@ -26,6 +26,29 @@ struct OpenAIChatCompletionsResponse: Codable {
     let choices: [Choice]
 }
 
+// Streaming response structure
+struct OpenAIChatCompletionsStreamResponse: Codable {
+    struct Choice: Codable {
+        struct Delta: Codable {
+            let role: String?
+            let content: String?
+        }
+        
+        let index: Int
+        let delta: Delta
+        let finishReason: String?
+        
+        enum CodingKeys: String, CodingKey {
+            case index
+            case delta
+            case finishReason = "finish_reason"
+        }
+    }
+    
+    let id: String?
+    let choices: [Choice]
+}
+
 struct OpenAIModelsResponse: Codable {
     let data: [OpenAIModel]
 }
@@ -50,15 +73,17 @@ enum OpenAICompatibleError: Error {
     case badStatus(Int)
     case decoding(Error)
     case emptyResponse
+    case streamingError(String)
 }
 
-final class OpenAICompatibleClient {
+final class OpenAICompatibleClient: @unchecked Sendable {
     private let urlSession: URLSession
 
     nonisolated init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
 
+    /// Non-streaming chat completion (kept for compatibility)
     func createChatCompletion(
         baseURL: String,
         apiKey: String,
@@ -81,6 +106,74 @@ final class OpenAICompatibleClient {
             return first.message.content
         } catch {
             throw OpenAICompatibleError.decoding(error)
+        }
+    }
+    
+    /// Streaming chat completion - returns an AsyncThrowingStream of content deltas
+    func createChatCompletionStream(
+        baseURL: String,
+        apiKey: String,
+        model: String,
+        messages: [OpenAIChatMessage]
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    guard let root = URL(string: baseURL) else {
+                        throw OpenAICompatibleError.invalidBaseURL
+                    }
+                    
+                    let endpoint = root.appending(path: "chat/completions")
+                    
+                    var request = URLRequest(url: endpoint)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    
+                    if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                    }
+                    
+                    let body = OpenAIChatCompletionsRequest(model: model, messages: messages, stream: true)
+                    request.httpBody = try JSONEncoder().encode(body)
+                    
+                    let (bytes, response) = try await self.urlSession.bytes(for: request)
+                    
+                    let http = response as? HTTPURLResponse
+                    let status = http?.statusCode ?? -1
+                    guard (200..<300).contains(status) else {
+                        throw OpenAICompatibleError.badStatus(status)
+                    }
+                    
+                    // Process SSE stream
+                    for try await line in bytes.lines {
+                        // SSE format: "data: {json}" or "data: [DONE]"
+                        guard line.hasPrefix("data: ") else { continue }
+                        
+                        let jsonString = String(line.dropFirst(6))
+                        
+                        if jsonString == "[DONE]" {
+                            break
+                        }
+                        
+                        guard let jsonData = jsonString.data(using: .utf8) else { continue }
+                        
+                        do {
+                            let chunk = try JSONDecoder().decode(OpenAIChatCompletionsStreamResponse.self, from: jsonData)
+                            if let content = chunk.choices.first?.delta.content, !content.isEmpty {
+                                continuation.yield(content)
+                            }
+                        } catch {
+                            // Skip malformed chunks but continue streaming
+                            continue
+                        }
+                    }
+                    
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
         }
     }
 
