@@ -144,14 +144,32 @@ final class AccessibilityService {
         
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         
-        // Try to get focused window first, fall back to main window
-        if let window = copyAXUIElement(appElement, attribute: kAXFocusedWindowAttribute)
-                     ?? copyAXUIElement(appElement, attribute: kAXMainWindowAttribute) {
-            windowTitle = copyAXString(window, attribute: kAXTitleAttribute)
+        // Get all windows and try to extract content from them
+        var windowsRef: CFTypeRef?
+        let windowsError = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        
+        if windowsError == .success, let windows = windowsRef as? [AXUIElement], !windows.isEmpty {
+            // Use the first (usually main/frontmost) window
+            let mainWindow = windows[0]
+            windowTitle = copyAXString(mainWindow, attribute: kAXTitleAttribute)
             
-            // Try to get content from the window - look for text areas, web views, etc.
-            if let content = extractWindowContent(from: window) {
-                focusedValuePreview = truncate(content, limit: 2000)
+            // Try to get content from the window
+            if let content = extractWindowContent(from: mainWindow) {
+                focusedValuePreview = truncate(content, limit: 4000)
+            }
+        }
+        
+        // Fallback: try focused/main window attributes
+        if focusedValuePreview == nil || focusedValuePreview?.isEmpty == true {
+            if let window = copyAXUIElement(appElement, attribute: kAXMainWindowAttribute)
+                         ?? copyAXUIElement(appElement, attribute: kAXFocusedWindowAttribute) {
+                if windowTitle == nil {
+                    windowTitle = copyAXString(window, attribute: kAXTitleAttribute)
+                }
+                
+                if let content = extractWindowContent(from: window) {
+                    focusedValuePreview = truncate(content, limit: 4000)
+                }
             }
         }
         
@@ -171,7 +189,7 @@ final class AccessibilityService {
             // If we didn't get content from window, try focused element
             if focusedValuePreview == nil || focusedValuePreview?.isEmpty == true {
                 if let value = copyAXString(focused, attribute: kAXValueAttribute) {
-                    focusedValuePreview = truncate(value, limit: 2000)
+                    focusedValuePreview = truncate(value, limit: 4000)
                 }
             }
         }
@@ -192,7 +210,7 @@ final class AccessibilityService {
         var contents: [String] = []
         
         // Try to find text content in the window hierarchy
-        collectTextContent(from: window, into: &contents, depth: 0, maxDepth: 10)
+        collectTextContent(from: window, into: &contents, depth: 0, maxDepth: 15)
         
         let combined = contents.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         return combined.isEmpty ? nil : combined
@@ -201,18 +219,36 @@ final class AccessibilityService {
     /// Recursively collect text content from accessibility elements
     private func collectTextContent(from element: AXUIElement, into contents: inout [String], depth: Int, maxDepth: Int) {
         guard depth < maxDepth else { return }
+        guard contents.joined().count < 5000 else { return } // Stop if we have enough content
         
         let role = copyAXString(element, attribute: kAXRoleAttribute)
         
-        // Get value from text-like elements
-        if let role = role {
-            let textRoles = ["AXTextArea", "AXTextField", "AXStaticText", "AXWebArea", "AXGroup"]
-            if textRoles.contains(role) {
-                if let value = copyAXString(element, attribute: kAXValueAttribute), !value.isEmpty {
-                    contents.append(value)
-                    return // Don't recurse into text elements
+        // Try to get value from various element types
+        if let value = copyAXString(element, attribute: kAXValueAttribute), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Filter out very short values that are likely UI elements
+            if value.count > 2 {
+                contents.append(value)
+            }
+        }
+        
+        // For static text, also try the title/description
+        if role == "AXStaticText" || role == "AXText" {
+            if let title = copyAXString(element, attribute: kAXTitleAttribute), !title.isEmpty, title.count > 2 {
+                if !contents.contains(title) {
+                    contents.append(title)
                 }
             }
+            if let desc = copyAXString(element, attribute: kAXDescriptionAttribute as String), !desc.isEmpty, desc.count > 2 {
+                if !contents.contains(desc) {
+                    contents.append(desc)
+                }
+            }
+        }
+        
+        // For web areas, try to get the whole content
+        if role == "AXWebArea" {
+            // Web content often has text in AXValue
+            return // Don't recurse further into web areas, we got the value above
         }
         
         // Recurse into children
@@ -220,7 +256,7 @@ final class AccessibilityService {
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return }
         
-        for child in children.prefix(50) { // Limit to prevent infinite recursion
+        for child in children.prefix(100) { // Limit to prevent performance issues
             collectTextContent(from: child, into: &contents, depth: depth + 1, maxDepth: maxDepth)
         }
     }
