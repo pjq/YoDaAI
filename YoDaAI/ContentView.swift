@@ -787,25 +787,35 @@ private struct MarkdownTextView: View {
         while let regex = try? NSRegularExpression(pattern: codeBlockPattern, options: []),
               let match = regex.firstMatch(in: remaining, options: [], range: NSRange(remaining.startIndex..., in: remaining)) {
             
+            // Safely convert NSRange to String.Index - guard against out of bounds
+            guard let matchRange = Range(match.range, in: remaining) else { break }
+            
             // Text before the code block
-            let beforeRange = remaining.startIndex..<remaining.index(remaining.startIndex, offsetBy: match.range.location)
-            let beforeText = String(remaining[beforeRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let beforeText = String(remaining[remaining.startIndex..<matchRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             if !beforeText.isEmpty {
                 blocks.append(contentsOf: parseTextBlock(beforeText))
             }
             
-            // Extract language and code
-            let languageRange = Range(match.range(at: 1), in: remaining)
-            let codeRange = Range(match.range(at: 2), in: remaining)
+            // Extract language and code safely
+            let language: String?
+            if let languageRange = Range(match.range(at: 1), in: remaining) {
+                let lang = String(remaining[languageRange])
+                language = lang.isEmpty ? nil : lang
+            } else {
+                language = nil
+            }
             
-            let language = languageRange.map { String(remaining[$0]) }
-            let code = codeRange.map { String(remaining[$0]).trimmingCharacters(in: .newlines) } ?? ""
+            let code: String
+            if let codeRange = Range(match.range(at: 2), in: remaining) {
+                code = String(remaining[codeRange]).trimmingCharacters(in: .newlines)
+            } else {
+                code = ""
+            }
             
-            blocks.append(.code(language: language?.isEmpty == true ? nil : language, code: code))
+            blocks.append(.code(language: language, code: code))
             
-            // Move past this match
-            let matchEnd = remaining.index(remaining.startIndex, offsetBy: match.range.location + match.range.length)
-            remaining = String(remaining[matchEnd...])
+            // Move past this match safely
+            remaining = String(remaining[matchRange.upperBound...])
         }
         
         // Remaining text after last code block
