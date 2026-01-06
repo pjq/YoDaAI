@@ -16,6 +16,7 @@ struct ContentView: View {
         accessibilityService: AccessibilityService(),
         permissionsStore: AppPermissionsStore()
     )
+    @ObservedObject private var floatingPanelController = FloatingPanelController.shared
     @State private var activeThread: ChatThread?
     @State private var isShowingSettings = false
     @State private var searchText = ""
@@ -105,12 +106,27 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    isShowingSettings = true
-                } label: {
-                    Image(systemName: "gear")
+                HStack(spacing: 12) {
+                    // Floating panel toggle
+                    Button {
+                        if floatingPanelController.isVisible {
+                            floatingPanelController.hide()
+                        } else {
+                            floatingPanelController.show()
+                        }
+                    } label: {
+                        Image(systemName: floatingPanelController.isVisible ? "pip.fill" : "pip")
+                    }
+                    .help(floatingPanelController.isVisible ? "Hide capture panel" : "Show capture panel")
+                    
+                    // Settings button
+                    Button {
+                        isShowingSettings = true
+                    } label: {
+                        Image(systemName: "gear")
+                    }
+                    .help("Settings")
                 }
-                .help("Settings")
             }
         }
         .sheet(isPresented: $isShowingSettings) {
@@ -1277,11 +1293,24 @@ private struct MentionChipView: View {
         isLoading = true
         hasLoadedOnce = true
         Task { @MainActor in
-            // Use the activation method to briefly switch to the app and capture content
+            // First try to use globally cached content from floating panel
+            if let globalCached = ContentCacheService.shared.getCachedSnapshot(for: app.bundleIdentifier) {
+                print("[MentionChipView] Using cached content from floating panel for \(app.appName)")
+                previewContent = globalCached.focusedValuePreview
+                windowTitle = globalCached.windowTitle
+                isLoading = false
+                viewModel.updateMentionContext(for: app.bundleIdentifier, snapshot: globalCached)
+                return
+            }
+            
+            // Otherwise, capture by activating the app
             let snapshot = await viewModel.accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: false)
             previewContent = snapshot?.focusedValuePreview
             windowTitle = snapshot?.windowTitle
             isLoading = false
+            
+            // Cache the snapshot in the ViewModel so it's available when sending
+            viewModel.updateMentionContext(for: app.bundleIdentifier, snapshot: snapshot)
         }
     }
 }
@@ -1547,9 +1576,76 @@ private struct SettingsView: View {
 // MARK: - General Settings Tab
 private struct GeneralSettingsTab: View {
     @ObservedObject var viewModel: ChatViewModel
+    @ObservedObject var floatingPanelController = FloatingPanelController.shared
+    @ObservedObject var cacheService = ContentCacheService.shared
+    @State private var showCachedAppsSheet = false
 
     var body: some View {
         Form {
+            Section("Floating Panel") {
+                Toggle("Show floating capture panel", isOn: Binding(
+                    get: { floatingPanelController.isVisible },
+                    set: { newValue in
+                        if newValue {
+                            floatingPanelController.show()
+                        } else {
+                            floatingPanelController.hide()
+                        }
+                    }
+                ))
+                Text("Continuously capture content from the foreground app")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                // Custom title setting
+                TextField("Panel title", text: $floatingPanelController.customTitle)
+                Text("Customize the floating panel title (e.g., \"Jianqing's YoDaAI\")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                if floatingPanelController.isVisible {
+                    // Cached apps row - clickable
+                    Button {
+                        showCachedAppsSheet = true
+                    } label: {
+                        HStack {
+                            Text("Cached apps")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(cacheService.cache.count)")
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Toggle("Auto-capture enabled", isOn: $cacheService.isCaptureEnabled)
+                    
+                    Button("Clear Cache") {
+                        cacheService.clearCache()
+                    }
+                    .foregroundStyle(.red)
+                }
+            }
+            
+            Section("Permissions") {
+                Button("Open Automation Settings") {
+                    cacheService.openAutomationSettings()
+                }
+                Text("Grant YoDaAI permission to control other apps (required for Safari/Chrome capture)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Button("Open Accessibility Settings") {
+                    cacheService.openAccessibilitySettings()
+                }
+                Text("Grant YoDaAI permission to read app content")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
             Section("App Context") {
                 Toggle("Always attach app context", isOn: $viewModel.alwaysAttachAppContext)
                 Text("Include frontmost app info when sending messages")
@@ -1567,6 +1663,268 @@ private struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showCachedAppsSheet) {
+            CachedAppsDetailView()
+        }
+    }
+}
+
+// MARK: - Cached Apps Detail View
+private struct CachedAppsDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var cacheService = ContentCacheService.shared
+    @State private var selectedAppBundleId: String?
+    @State private var selectedContent: CachedAppContent?
+    
+    var body: some View {
+        NavigationSplitView {
+            // List of cached apps
+            List(selection: $selectedAppBundleId) {
+                ForEach(cacheService.getAllCachedApps(), id: \.bundleId) { item in
+                    CachedAppListRow(bundleId: item.bundleId, content: item.content)
+                        .tag(item.bundleId)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Cached Apps (\(cacheService.cache.count))")
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        cacheService.clearCache()
+                    } label: {
+                        Label("Clear All", systemImage: "trash")
+                    }
+                    .help("Clear all cached content")
+                }
+            }
+        } detail: {
+            if let bundleId = selectedAppBundleId,
+               let content = cacheService.getCachedContent(for: bundleId) {
+                CachedAppContentView(bundleId: bundleId, content: content)
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.tertiary)
+                    Text("Select an app to view cached content")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(minWidth: 700, minHeight: 500)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Cached App List Row
+private struct CachedAppListRow: View {
+    let bundleId: String
+    let content: CachedAppContent
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            // App icon
+            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }),
+               let icon = app.icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 32, height: 32)
+            } else {
+                Image(systemName: "app.fill")
+                    .font(.system(size: 24))
+                    .frame(width: 32, height: 32)
+                    .foregroundStyle(.secondary)
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(content.snapshot.appName)
+                    .font(.headline)
+                    .lineLimit(1)
+                
+                HStack(spacing: 6) {
+                    // Content status
+                    let charCount = content.snapshot.focusedValuePreview?.count ?? 0
+                    if charCount > 0 {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(content.isOlderThan(60) ? Color.orange : Color.green)
+                                .frame(width: 6, height: 6)
+                            Text("\(charCount) chars")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 6, height: 6)
+                            Text("No content")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    Text("•")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    
+                    Text(timeAgo(content.capturedAt))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private func timeAgo(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 60 {
+            return "\(seconds)s ago"
+        } else if seconds < 3600 {
+            return "\(seconds / 60)m ago"
+        } else {
+            return "\(seconds / 3600)h ago"
+        }
+    }
+}
+
+// MARK: - Cached App Content View
+private struct CachedAppContentView: View {
+    let bundleId: String
+    let content: CachedAppContent
+    @State private var isCopied = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                // App icon
+                if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }),
+                   let icon = app.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                } else {
+                    Image(systemName: "app.fill")
+                        .font(.system(size: 36))
+                        .frame(width: 48, height: 48)
+                        .foregroundStyle(.secondary)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(content.snapshot.appName)
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    
+                    Text(bundleId)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    if let windowTitle = content.snapshot.windowTitle, !windowTitle.isEmpty {
+                        Text(windowTitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                
+                Spacer()
+                
+                // Copy button
+                Button {
+                    if let text = content.snapshot.focusedValuePreview {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                        isCopied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            isCopied = false
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        Text(isCopied ? "Copied!" : "Copy")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(content.snapshot.focusedValuePreview == nil)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            
+            Divider()
+            
+            // Metadata
+            HStack(spacing: 20) {
+                MetadataItem(label: "Characters", value: "\(content.snapshot.focusedValuePreview?.count ?? 0)")
+                MetadataItem(label: "Captured", value: formatDate(content.capturedAt))
+                MetadataItem(label: "Role", value: content.snapshot.focusedRole ?? "Unknown")
+                MetadataItem(label: "Status", value: content.isOlderThan(60) ? "Stale" : "Fresh", color: content.isOlderThan(60) ? .orange : .green)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            
+            Divider()
+            
+            // Content
+            if let text = content.snapshot.focusedValuePreview, !text.isEmpty {
+                ScrollView {
+                    Text(text)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.tertiary)
+                    Text("No content captured")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Text("The app may not have had any accessible content when captured.")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .medium
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Metadata Item
+private struct MetadataItem: View {
+    let label: String
+    let value: String
+    var color: Color = .primary
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout)
+                .fontWeight(.medium)
+                .foregroundStyle(color)
+        }
     }
 }
 

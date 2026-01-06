@@ -12,6 +12,7 @@ final class ChatViewModel: ObservableObject {
     @Published var alwaysAttachAppContext: Bool = true
     @Published var streamingMessageID: UUID?  // Track the message being streamed
     @Published var mentionedApps: [RunningApp] = []  // Apps mentioned with @
+    @Published var mentionedAppContexts: [String: AppContextSnapshot] = [:] // Cached captured content by bundleIdentifier
     @Published var showMentionPicker: Bool = false  // Show @ mention picker
     @Published var mentionSearchText: String = ""  // Filter text for mention picker
     @Published var pendingImages: [PendingImage] = []  // Images being composed
@@ -71,11 +72,27 @@ final class ChatViewModel: ObservableObject {
     /// Remove an app from the mentioned apps list
     func removeMention(_ app: RunningApp) {
         mentionedApps.removeAll { $0.bundleIdentifier == app.bundleIdentifier }
+        mentionedAppContexts.removeValue(forKey: app.bundleIdentifier)
     }
     
     /// Clear all mentions
     func clearMentions() {
         mentionedApps.removeAll()
+        mentionedAppContexts.removeAll()
+    }
+    
+    /// Update cached context for a mentioned app
+    func updateMentionContext(for bundleIdentifier: String, snapshot: AppContextSnapshot?) {
+        if let snapshot = snapshot {
+            mentionedAppContexts[bundleIdentifier] = snapshot
+        } else {
+            mentionedAppContexts.removeValue(forKey: bundleIdentifier)
+        }
+    }
+    
+    /// Get cached context for a mentioned app
+    func getMentionContext(for bundleIdentifier: String) -> AppContextSnapshot? {
+        return mentionedAppContexts[bundleIdentifier]
     }
     
     /// Check if user typed @ and should show picker
@@ -225,12 +242,14 @@ final class ChatViewModel: ObservableObject {
         isSending = true
         lastErrorMessage = nil
 
-        // Capture state before clearing
+        // Capture state before clearing - including cached contexts!
         let appsToCapture = mentionedApps
+        let cachedContexts = mentionedAppContexts
         let imagesToSend = pendingImages
 
         composerText = ""
         mentionedApps = []
+        mentionedAppContexts = [:]
         pendingImages = []
 
         do {
@@ -262,7 +281,7 @@ final class ChatViewModel: ObservableObject {
 
             try context.save()
 
-            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: appsToCapture, in: context)
+            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: appsToCapture, cachedContexts: cachedContexts, in: context)
 
             // Auto-generate thread title from first user message if still "New Chat"
             if thread.title == "New Chat" {
@@ -341,7 +360,7 @@ final class ChatViewModel: ObservableObject {
         try? context.save()
     }
     
-    private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], in context: ModelContext) async throws {
+    private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], cachedContexts: [String: AppContextSnapshot] = [:], in context: ModelContext) async throws {
         let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
 
         // Build message history with image support
@@ -378,10 +397,24 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
-        // Add context from @ mentioned apps (using activation to capture content reliably)
+        // Add context from @ mentioned apps - use CACHED contexts first
         for app in mentionedApps {
-            // Use async method that briefly activates the app to capture content
-            if let snapshot = await accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: true) {
+            // First try to use cached context from MentionChipView
+            var snapshot: AppContextSnapshot?
+            if let cached = cachedContexts[app.bundleIdentifier] {
+                print("[ChatViewModel] Using MentionChip cached context for \(app.appName)")
+                snapshot = cached
+            } else if let globalCached = ContentCacheService.shared.getCachedSnapshot(for: app.bundleIdentifier) {
+                // Try global cache from floating panel
+                print("[ChatViewModel] Using FloatingPanel cached context for \(app.appName)")
+                snapshot = globalCached
+            } else {
+                // Fall back to capturing (shouldn't happen normally)
+                print("[ChatViewModel] No cached context for \(app.appName), capturing now...")
+                snapshot = await accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: true)
+            }
+            
+            if let snapshot = snapshot {
                 let rule = try permissionsStore.ensureRule(
                     for: snapshot.bundleIdentifier,
                     displayName: snapshot.appName,
@@ -391,6 +424,7 @@ final class ChatViewModel: ObservableObject {
                 if rule.allowContext {
                     let contextText = formatAppContext(snapshot, isMentioned: true)
                     if !contextText.isEmpty {
+                        print("[ChatViewModel] Adding context for \(app.appName): \(contextText.prefix(100))...")
                         requestMessages.append(OpenAIChatMessage(role: "system", content: contextText))
                     }
                 }

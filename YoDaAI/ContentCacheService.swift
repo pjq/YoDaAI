@@ -1,0 +1,401 @@
+import Foundation
+import AppKit
+import Combine
+
+/// Cached content from an app
+struct CachedAppContent: Sendable {
+    let snapshot: AppContextSnapshot
+    let capturedAt: Date
+    let isStale: Bool
+    
+    init(snapshot: AppContextSnapshot, capturedAt: Date = Date()) {
+        self.snapshot = snapshot
+        self.capturedAt = capturedAt
+        self.isStale = false
+    }
+    
+    /// Check if content is older than the given interval
+    func isOlderThan(_ interval: TimeInterval) -> Bool {
+        return Date().timeIntervalSince(capturedAt) > interval
+    }
+}
+
+/// Service that caches captured content from apps
+/// This allows the floating panel to continuously capture content
+/// so it's ready when the user wants to @ mention an app
+@MainActor
+final class ContentCacheService: ObservableObject {
+    static let shared = ContentCacheService()
+    
+    /// Cached content by bundle identifier
+    @Published private(set) var cache: [String: CachedAppContent] = [:]
+    
+    /// Currently monitored foreground app
+    @Published private(set) var currentForegroundApp: RunningApp?
+    
+    /// Whether continuous capture is enabled
+    @Published var isCaptureEnabled: Bool = true
+    
+    /// Capture interval in seconds
+    let captureInterval: TimeInterval = 3.0
+    
+    /// Content expiration time (how long before content is considered stale)
+    let contentExpirationTime: TimeInterval = 60.0
+    
+    private var captureTimer: Timer?
+    private var workspaceObserver: NSObjectProtocol?
+    private let accessibilityService = AccessibilityService()
+    
+    private init() {
+        setupWorkspaceObserver()
+    }
+    
+    func cleanup() {
+        stopCapturing()
+        if let observer = workspaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+    }
+    
+    // MARK: - Public API
+    
+    /// Start continuous background capture
+    func startCapturing() {
+        guard captureTimer == nil else { return }
+        
+        print("[ContentCacheService] Starting continuous capture...")
+        
+        // Capture immediately
+        Task {
+            await captureCurrentForegroundApp()
+        }
+        
+        // Set up periodic capture
+        captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.captureCurrentForegroundApp()
+            }
+        }
+    }
+    
+    /// Stop continuous capture
+    func stopCapturing() {
+        captureTimer?.invalidate()
+        captureTimer = nil
+        print("[ContentCacheService] Stopped continuous capture")
+    }
+    
+    /// Get cached content for an app
+    func getCachedContent(for bundleIdentifier: String) -> CachedAppContent? {
+        return cache[bundleIdentifier]
+    }
+    
+    /// Get cached snapshot for an app (convenience method)
+    func getCachedSnapshot(for bundleIdentifier: String) -> AppContextSnapshot? {
+        return cache[bundleIdentifier]?.snapshot
+    }
+    
+    /// Check if we have fresh content for an app
+    func hasFreshContent(for bundleIdentifier: String) -> Bool {
+        guard let cached = cache[bundleIdentifier] else { return false }
+        return !cached.isOlderThan(contentExpirationTime)
+    }
+    
+    /// Manually trigger capture for the current foreground app
+    func captureNow() async {
+        await captureCurrentForegroundApp()
+    }
+    
+    /// Clear all cached content
+    func clearCache() {
+        cache.removeAll()
+        print("[ContentCacheService] Cache cleared")
+    }
+    
+    /// Get all cached apps sorted by capture time (most recent first)
+    func getAllCachedApps() -> [(bundleId: String, content: CachedAppContent)] {
+        return cache
+            .map { ($0.key, $0.value) }
+            .sorted { $0.1.capturedAt > $1.1.capturedAt }
+    }
+    
+    /// Open System Settings to the Automation privacy pane
+    func openAutomationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    /// Open System Settings to the Accessibility privacy pane  
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func setupWorkspaceObserver() {
+        // Observe app activation changes
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                self?.handleAppActivation(notification)
+            }
+        }
+    }
+    
+    private func handleAppActivation(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleId = app.bundleIdentifier,
+              let appName = app.localizedName else {
+            return
+        }
+        
+        // Don't capture our own app
+        guard bundleId != Bundle.main.bundleIdentifier else {
+            return
+        }
+        
+        print("[ContentCacheService] App activated: \(appName)")
+        
+        // Update current foreground app
+        currentForegroundApp = RunningApp(
+            appName: appName,
+            bundleIdentifier: bundleId,
+            icon: app.icon
+        )
+        
+        // Capture content for the newly activated app
+        if isCaptureEnabled {
+            Task {
+                // Small delay to let the app settle
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                await captureCurrentForegroundApp()
+            }
+        }
+    }
+    
+    private func captureCurrentForegroundApp() async {
+        guard isCaptureEnabled else { return }
+        
+        guard let frontmost = NSWorkspace.shared.frontmostApplication,
+              let bundleId = frontmost.bundleIdentifier,
+              let appName = frontmost.localizedName else {
+            return
+        }
+        
+        // Don't capture our own app
+        guard bundleId != Bundle.main.bundleIdentifier else {
+            return
+        }
+        
+        // Update current foreground app
+        currentForegroundApp = RunningApp(
+            appName: appName,
+            bundleIdentifier: bundleId,
+            icon: frontmost.icon
+        )
+        
+        // Try AppleScript first for supported apps (most reliable)
+        if let appleScriptSnapshot = captureViaAppleScript(bundleIdentifier: bundleId, appName: appName) {
+            let cached = CachedAppContent(snapshot: appleScriptSnapshot)
+            cache[bundleId] = cached
+            let contentLength = appleScriptSnapshot.focusedValuePreview?.count ?? 0
+            print("[ContentCacheService] Cached content for \(appName) via AppleScript: \(contentLength) chars")
+            return
+        }
+        
+        // Fall back to full context capture (traverses window hierarchy)
+        print("[ContentCacheService] Trying Accessibility API for \(appName)...")
+        let snapshot = accessibilityService.captureContext(for: bundleId, promptIfNeeded: false)
+        
+        if let snapshot = snapshot {
+            let cached = CachedAppContent(snapshot: snapshot)
+            cache[bundleId] = cached
+            
+            let contentLength = snapshot.focusedValuePreview?.count ?? 0
+            print("[ContentCacheService] Cached content for \(appName): \(contentLength) chars")
+        } else {
+            // Still cache a basic snapshot so we know about the app
+            let basicSnapshot = AppContextSnapshot(
+                appName: appName,
+                bundleIdentifier: bundleId,
+                windowTitle: getWindowTitle(for: frontmost),
+                focusedRole: nil,
+                focusedValuePreview: nil,
+                focusedIsEditable: false,
+                focusedIsSecure: false
+            )
+            cache[bundleId] = CachedAppContent(snapshot: basicSnapshot)
+            print("[ContentCacheService] Cached basic info for \(appName) (no content captured)")
+        }
+    }
+    
+    /// Get window title using CGWindowList (works without Accessibility permission)
+    private func getWindowTitle(for app: NSRunningApplication) -> String? {
+        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        
+        for windowInfo in windowList {
+            if let windowPID = windowInfo[kCGWindowOwnerPID as String] as? Int32,
+               windowPID == app.processIdentifier,
+               let title = windowInfo[kCGWindowName as String] as? String,
+               !title.isEmpty {
+                return title
+            }
+        }
+        return nil
+    }
+    
+    // MARK: - AppleScript Capture (copied from AccessibilityService for background capture)
+    
+    private func captureViaAppleScript(bundleIdentifier: String, appName: String) -> AppContextSnapshot? {
+        var script: String?
+        var windowTitle: String?
+        
+        switch bundleIdentifier {
+        case "com.apple.Safari":
+            script = """
+            tell application "Safari"
+                if (count of windows) is 0 then
+                    return ""
+                end if
+                set tabTitle to name of current tab of front window
+                set tabURL to URL of current tab of front window
+                try
+                    set pageText to do JavaScript "document.body.innerText" in current tab of front window
+                on error
+                    set pageText to ""
+                end try
+                return tabTitle & linefeed & tabURL & linefeed & linefeed & pageText
+            end tell
+            """
+            
+        case "com.google.Chrome", "com.google.Chrome.canary":
+            script = """
+            tell application "Google Chrome"
+                if (count of windows) is 0 then
+                    return ""
+                end if
+                set tabTitle to title of active tab of front window
+                set tabURL to URL of active tab of front window
+                try
+                    set pageText to execute active tab of front window javascript "document.body.innerText"
+                on error
+                    set pageText to ""
+                end try
+                return tabTitle & linefeed & tabURL & linefeed & linefeed & pageText
+            end tell
+            """
+            
+        case "com.apple.Notes":
+            script = """
+            tell application "Notes"
+                set noteContent to ""
+                try
+                    set theNote to selection
+                    if theNote is not {} then
+                        set noteContent to body of item 1 of theNote as text
+                    else
+                        set noteContent to body of first note as text
+                    end if
+                end try
+                return noteContent
+            end tell
+            """
+            
+        case "com.apple.mail":
+            script = """
+            tell application "Mail"
+                set msgContent to ""
+                try
+                    set theMessages to selection
+                    if theMessages is not {} then
+                        set theMessage to item 1 of theMessages
+                        set msgSubject to subject of theMessage
+                        set msgSender to sender of theMessage
+                        set msgContent to content of theMessage
+                        return "Subject: " & msgSubject & linefeed & "From: " & msgSender & linefeed & linefeed & msgContent
+                    end if
+                end try
+                return msgContent
+            end tell
+            """
+            
+        case "com.apple.TextEdit":
+            script = """
+            tell application "TextEdit"
+                set docContent to ""
+                try
+                    set docContent to text of front document
+                end try
+                return docContent
+            end tell
+            """
+            
+        default:
+            return nil
+        }
+        
+        guard let scriptSource = script else { return nil }
+        
+        print("[ContentCacheService] Running AppleScript for \(appName)...")
+        
+        var error: NSDictionary?
+        guard let appleScript = NSAppleScript(source: scriptSource) else {
+            print("[ContentCacheService] Failed to create AppleScript")
+            return nil
+        }
+        
+        let result = appleScript.executeAndReturnError(&error)
+        
+        if let error = error {
+            let errorNumber = error["NSAppleScriptErrorNumber"] as? Int ?? 0
+            let errorMessage = error["NSAppleScriptErrorMessage"] as? String ?? "Unknown error"
+            print("[ContentCacheService] AppleScript error for \(appName): [\(errorNumber)] \(errorMessage)")
+            
+            // Error -1743 means "Not authorized to send Apple events"
+            // This requires Automation permission in System Settings
+            if errorNumber == -1743 {
+                print("[ContentCacheService] ⚠️ YoDaAI needs Automation permission for \(appName)")
+                print("[ContentCacheService] Please grant permission in: System Settings → Privacy & Security → Automation")
+            }
+            return nil
+        }
+        
+        guard let content = result.stringValue, !content.isEmpty else {
+            print("[ContentCacheService] AppleScript returned empty result for \(appName)")
+            return nil
+        }
+        
+        print("[ContentCacheService] AppleScript captured \(content.count) chars for \(appName)")
+        
+        // Extract window title from content if available
+        let lines = content.components(separatedBy: "\n")
+        if lines.count > 1 {
+            windowTitle = lines[0]
+        }
+        
+        return AppContextSnapshot(
+            appName: appName,
+            bundleIdentifier: bundleIdentifier,
+            windowTitle: windowTitle,
+            focusedRole: "AppleScript",
+            focusedValuePreview: truncate(content, limit: 4000),
+            focusedIsEditable: false,
+            focusedIsSecure: false
+        )
+    }
+    
+    private func truncate(_ string: String, limit: Int) -> String {
+        if string.count <= limit {
+            return string
+        }
+        return String(string.prefix(limit)) + "…"
+    }
+}

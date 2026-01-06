@@ -323,20 +323,58 @@ final class AccessibilityService {
     /// Capture context by briefly activating the target app, then returning to YoDaAI
     /// This is more reliable for capturing content from background apps
     func captureContextWithActivation(for bundleIdentifier: String, promptIfNeeded: Bool) async -> AppContextSnapshot? {
-        guard ensurePermission(promptIfNeeded: promptIfNeeded) else {
-            print("[AccessibilityService] Permission not granted")
-            return nil
-        }
-        
         guard let targetApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleIdentifier }) else {
             print("[AccessibilityService] App not found: \(bundleIdentifier)")
             return nil
         }
         
+        let appName = targetApp.localizedName ?? "(Unknown App)"
+        print("[AccessibilityService] Capturing content from: \(appName)")
+        
+        // 1. First try AppleScript for supported apps (doesn't need Accessibility permission)
+        if let appleScriptResult = captureViaAppleScript(bundleIdentifier: bundleIdentifier, appName: appName) {
+            print("[AccessibilityService] AppleScript capture successful!")
+            return appleScriptResult
+        }
+        
+        // 2. Check Accessibility permission for remaining methods
+        let hasAccessibility = ensurePermission(promptIfNeeded: promptIfNeeded)
+        print("[AccessibilityService] Accessibility permission: \(hasAccessibility ? "granted" : "NOT granted")")
+        
+        if !hasAccessibility {
+            // Open System Settings to Accessibility pane
+            if promptIfNeeded {
+                print("[AccessibilityService] Opening System Settings for Accessibility...")
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            // Return a basic snapshot with just the app name
+            return AppContextSnapshot(
+                appName: appName,
+                bundleIdentifier: bundleIdentifier,
+                windowTitle: nil,
+                focusedRole: nil,
+                focusedValuePreview: "[Accessibility permission required to capture content]",
+                focusedIsEditable: false,
+                focusedIsSecure: false
+            )
+        }
+        
+        // 3. Try clipboard-based capture (Cmd+C) - works for Electron apps
+        let clipboardResult = await captureViaClipboard(for: targetApp)
+        if let result = clipboardResult, result.focusedValuePreview != nil && !result.focusedValuePreview!.isEmpty {
+            print("[AccessibilityService] Clipboard capture successful!")
+            return result
+        }
+        
+        // 4. Fall back to Accessibility API with activation
+        print("[AccessibilityService] Falling back to Accessibility API...")
+        
         // Remember the current app (YoDaAI) to return to it later
         let currentApp = NSRunningApplication.current
         
-        print("[AccessibilityService] Activating \(targetApp.localizedName ?? "app") to capture content...")
+        print("[AccessibilityService] Activating \(appName) to capture content...")
         
         // Activate the target app
         let activated = targetApp.activate()
@@ -352,7 +390,6 @@ final class AccessibilityService {
         print("[AccessibilityService] App isActive: \(targetApp.isActive) after \(waitCount * 50)ms")
         
         // Give Electron/web apps more time to settle their accessibility tree
-        // This is important for apps like Teams, Slack, VS Code
         try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
         
         // Now capture the content while the app is active
@@ -366,6 +403,262 @@ final class AccessibilityService {
         currentApp.activate()
         
         return snapshot
+    }
+    
+    // MARK: - AppleScript Capture
+    
+    /// Capture content using AppleScript for apps that support it
+    private func captureViaAppleScript(bundleIdentifier: String, appName: String) -> AppContextSnapshot? {
+        print("[AccessibilityService] Trying AppleScript for: \(bundleIdentifier)")
+        
+        var script: String?
+        var windowTitle: String?
+        
+        switch bundleIdentifier {
+        case "com.apple.Safari":
+            // Safari: Get current tab URL and page content
+            script = """
+            tell application "Safari"
+                if (count of windows) is 0 then
+                    return ""
+                end if
+                set tabTitle to name of current tab of front window
+                set tabURL to URL of current tab of front window
+                try
+                    set pageText to do JavaScript "document.body.innerText" in current tab of front window
+                on error
+                    set pageText to ""
+                end try
+                return tabTitle & linefeed & tabURL & linefeed & linefeed & pageText
+            end tell
+            """
+            
+        case "com.google.Chrome", "com.google.Chrome.canary":
+            // Chrome: Get current tab URL and page content
+            script = """
+            tell application "Google Chrome"
+                if (count of windows) is 0 then
+                    return ""
+                end if
+                set tabTitle to title of active tab of front window
+                set tabURL to URL of active tab of front window
+                try
+                    set pageText to execute active tab of front window javascript "document.body.innerText"
+                on error
+                    set pageText to ""
+                end try
+                return tabTitle & linefeed & tabURL & linefeed & linefeed & pageText
+            end tell
+            """
+            
+        case "com.apple.Notes":
+            // Notes: Get content of selected/current note
+            script = """
+            tell application "Notes"
+                set noteContent to ""
+                try
+                    set theNote to selection
+                    if theNote is not {} then
+                        set noteContent to body of item 1 of theNote as text
+                    else
+                        set noteContent to body of first note as text
+                    end if
+                end try
+                return noteContent
+            end tell
+            """
+            
+        case "com.apple.mail":
+            // Mail: Get content of selected message
+            script = """
+            tell application "Mail"
+                set msgContent to ""
+                try
+                    set theMessages to selection
+                    if theMessages is not {} then
+                        set theMessage to item 1 of theMessages
+                        set msgSubject to subject of theMessage
+                        set msgSender to sender of theMessage
+                        set msgContent to content of theMessage
+                        return "Subject: " & msgSubject & linefeed & "From: " & msgSender & linefeed & linefeed & msgContent
+                    end if
+                end try
+                return msgContent
+            end tell
+            """
+            
+        case "com.apple.TextEdit":
+            // TextEdit: Get document content
+            script = """
+            tell application "TextEdit"
+                set docContent to ""
+                try
+                    set docContent to text of front document
+                end try
+                return docContent
+            end tell
+            """
+            
+        case "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders":
+            // VS Code: Try to get content (limited support)
+            script = """
+            tell application "System Events"
+                tell process "Code"
+                    set windowName to name of front window
+                    return windowName
+                end tell
+            end tell
+            """
+            
+        default:
+            // For unsupported apps, return nil to try other methods
+            print("[AccessibilityService] No AppleScript support for: \(bundleIdentifier)")
+            return nil
+        }
+        
+        guard let scriptSource = script else { return nil }
+        
+        // Execute the AppleScript
+        var error: NSDictionary?
+        guard let appleScript = NSAppleScript(source: scriptSource) else {
+            print("[AccessibilityService] Failed to create AppleScript")
+            return nil
+        }
+        
+        let result = appleScript.executeAndReturnError(&error)
+        
+        if let error = error {
+            print("[AccessibilityService] AppleScript error: \(error)")
+            return nil
+        }
+        
+        guard let content = result.stringValue, !content.isEmpty else {
+            print("[AccessibilityService] AppleScript returned empty result")
+            return nil
+        }
+        
+        print("[AccessibilityService] AppleScript captured \(content.count) chars")
+        
+        // Extract window title from content if available (first line for Safari/Chrome)
+        let lines = content.components(separatedBy: "\n")
+        if lines.count > 1 {
+            windowTitle = lines[0]
+        }
+        
+        return AppContextSnapshot(
+            appName: appName,
+            bundleIdentifier: bundleIdentifier,
+            windowTitle: windowTitle,
+            focusedRole: "AppleScript",
+            focusedValuePreview: truncate(content, limit: 4000),
+            focusedIsEditable: false,
+            focusedIsSecure: false
+        )
+    }
+    
+    // MARK: - Clipboard-based Capture
+    
+    /// Capture content by simulating Cmd+A, Cmd+C (select all, copy)
+    /// This works for most apps including Electron apps
+    private func captureViaClipboard(for app: NSRunningApplication) async -> AppContextSnapshot? {
+        let appName = app.localizedName ?? "(Unknown App)"
+        let bundleIdentifier = app.bundleIdentifier ?? "(unknown.bundle)"
+        
+        print("[AccessibilityService] Trying clipboard capture for: \(appName)")
+        
+        // Save current clipboard content (for potential future restoration)
+        let pasteboard = NSPasteboard.general
+        _ = pasteboard.pasteboardItems?.compactMap { item -> (NSPasteboard.PasteboardType, Data)? in
+            guard let types = item.types.first,
+                  let data = item.data(forType: types) else { return nil }
+            return (types, data)
+        }
+        
+        // Remember the current app (YoDaAI) to return to it later
+        let currentApp = NSRunningApplication.current
+        
+        // Activate the target app
+        app.activate()
+        
+        // Wait for activation
+        var waitCount = 0
+        while !app.isActive && waitCount < 20 {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            waitCount += 1
+        }
+        
+        guard app.isActive else {
+            print("[AccessibilityService] Failed to activate app for clipboard capture")
+            return nil
+        }
+        
+        // Small delay to ensure app is ready
+        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+        
+        // Clear clipboard
+        pasteboard.clearContents()
+        
+        // Simulate Cmd+C to copy current selection (don't select all - too invasive)
+        simulateKeyPress(keyCode: 8, modifiers: .maskCommand) // Cmd+C
+        
+        // Wait for clipboard to be populated
+        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+        
+        // Get clipboard content
+        let copiedText = pasteboard.string(forType: .string)
+        
+        // Get window title via CGWindowList
+        var windowTitle: String?
+        if let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] {
+            for windowInfo in windowList {
+                if let windowPID = windowInfo[kCGWindowOwnerPID as String] as? Int32,
+                   windowPID == app.processIdentifier,
+                   let title = windowInfo[kCGWindowName as String] as? String,
+                   !title.isEmpty {
+                    windowTitle = title
+                    break
+                }
+            }
+        }
+        
+        // Return to YoDaAI
+        currentApp.activate()
+        
+        // Restore original clipboard (optional - might be confusing for users)
+        // For now, leave the copied content in clipboard as it might be useful
+        
+        if let text = copiedText, !text.isEmpty {
+            print("[AccessibilityService] Clipboard captured \(text.count) chars")
+            return AppContextSnapshot(
+                appName: appName,
+                bundleIdentifier: bundleIdentifier,
+                windowTitle: windowTitle,
+                focusedRole: "Clipboard",
+                focusedValuePreview: truncate(text, limit: 4000),
+                focusedIsEditable: false,
+                focusedIsSecure: false
+            )
+        }
+        
+        print("[AccessibilityService] Clipboard capture returned empty")
+        return nil
+    }
+    
+    /// Simulate a key press with modifiers
+    private func simulateKeyPress(keyCode: CGKeyCode, modifiers: CGEventFlags) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        
+        // Key down
+        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
+            keyDown.flags = modifiers
+            keyDown.post(tap: .cghidEventTap)
+        }
+        
+        // Key up
+        if let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
+            keyUp.flags = modifiers
+            keyUp.post(tap: .cghidEventTap)
+        }
     }
     
     /// Enhanced capture that works better with Electron apps
