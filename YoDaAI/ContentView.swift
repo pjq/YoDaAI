@@ -1630,22 +1630,6 @@ private struct GeneralSettingsTab: View {
                 }
             }
             
-            Section("Permissions") {
-                Button("Open Automation Settings") {
-                    cacheService.openAutomationSettings()
-                }
-                Text("Grant YoDaAI permission to control other apps (required for Safari/Chrome capture)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                
-                Button("Open Accessibility Settings") {
-                    cacheService.openAccessibilitySettings()
-                }
-                Text("Grant YoDaAI permission to read app content")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
             Section("App Context") {
                 Toggle("Always attach app context", isOn: $viewModel.alwaysAttachAppContext)
                 Text("Include frontmost app info when sending messages")
@@ -2254,6 +2238,46 @@ private struct PermissionsSettingsTab: View {
                     .padding(.top, 4)
                 }
             }
+            
+            Section("Automation Permission") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "gearshape.2")
+                                .foregroundStyle(.blue)
+                                .font(.title2)
+                            Text("Required for App Control")
+                                .font(.headline)
+                        }
+                        Text("Allows YoDaAI to capture content from Safari, Chrome, Notes, Mail, and TextEdit via AppleScript")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    
+                    Button("Open Settings") {
+                        openAutomationSettings()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 4)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("How to enable:")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text("1. Click \"Open Settings\" to open System Settings")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("2. Find YoDaAI in the list")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("3. Enable toggles for apps you want YoDaAI to control (Safari, Chrome, etc.)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            }
 
             Section("Per-App Permissions") {
                 if permissionRules.isEmpty {
@@ -2347,6 +2371,13 @@ private struct PermissionsSettingsTab: View {
     private func openAccessibilitySettings() {
         // Try the modern macOS 13+ URL first
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    private func openAutomationSettings() {
+        // Open Automation section in Privacy & Security
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
             NSWorkspace.shared.open(url)
         }
     }
