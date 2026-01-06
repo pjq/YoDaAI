@@ -31,7 +31,7 @@ final class FloatingPanelController: NSObject, ObservableObject {
         panel?.orderFront(nil)
         isVisible = true
         
-        // Start content capture
+        // Start content capture (now runs with timeouts to prevent hangs)
         ContentCacheService.shared.startCapturing()
     }
     

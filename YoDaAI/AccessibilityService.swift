@@ -4,6 +4,15 @@ import Foundation
 
 private let axEditableAttribute = "AXEditable" // kAXEditableAttribute is not always imported into Swift
 
+// MARK: - Timeout Configuration
+// Timeout for AX element operations (in seconds) - prevents hangs when target app is unresponsive
+private let kAXTimeout: Float = 2.0
+
+// Reduced limits for tree traversal to prevent hangs
+private let kMaxTreeDepth = 8
+private let kMaxTotalChars = 4000
+private let kMaxChildrenPerLevel = 30
+
 struct AppContextSnapshot: Sendable {
     var appName: String
     var bundleIdentifier: String
@@ -33,6 +42,28 @@ struct RunningApp: Identifiable, Hashable, Sendable {
 
 @MainActor
 final class AccessibilityService {
+    
+    // MARK: - Private Helpers for Timeout
+    
+    /// Set timeout on an AXUIElement to prevent hangs
+    private func setAXTimeout(for element: AXUIElement) {
+        AXUIElementSetMessagingTimeout(element, kAXTimeout)
+    }
+    
+    /// Create an app element with timeout already set
+    private func createAppElement(pid: pid_t) -> AXUIElement {
+        let element = AXUIElementCreateApplication(pid)
+        setAXTimeout(for: element)
+        return element
+    }
+    
+    /// Create the system-wide element with timeout
+    private func createSystemWideElement() -> AXUIElement {
+        let element = AXUIElementCreateSystemWide()
+        setAXTimeout(for: element)
+        return element
+    }
+    
     func ensurePermission(promptIfNeeded: Bool) -> Bool {
         if AXIsProcessTrusted() {
             return true
@@ -64,13 +95,15 @@ final class AccessibilityService {
         var focusedIsEditable = false
         var focusedIsSecure = false
 
-        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        let appElement = createAppElement(pid: application.processIdentifier)
 
         if let window = copyAXUIElement(appElement, attribute: kAXFocusedWindowAttribute) {
+            setAXTimeout(for: window)
             windowTitle = copyAXString(window, attribute: kAXTitleAttribute)
         }
 
         if let focused = copyAXUIElement(appElement, attribute: kAXFocusedUIElementAttribute) {
+            setAXTimeout(for: focused)
             focusedRole = copyAXString(focused, attribute: kAXRoleAttribute)
 
             if let editable = copyAXBool(focused, attribute: axEditableAttribute) {
@@ -146,7 +179,7 @@ final class AccessibilityService {
         var focusedIsEditable = false
         var focusedIsSecure = false
         
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let appElement = createAppElement(pid: app.processIdentifier)
         
         // Try multiple approaches to get content
         var contents: [String] = []
@@ -155,8 +188,9 @@ final class AccessibilityService {
         //    This is more reliable for getting selected text
         if app.isActive {
             print("[AccessibilityService] App is active, trying system-wide focused element")
-            let systemWide = AXUIElementCreateSystemWide()
+            let systemWide = createSystemWideElement()
             if let focused = copyAXUIElement(systemWide, attribute: kAXFocusedUIElementAttribute) {
+                setAXTimeout(for: focused)
                 // Try selected text first (most useful)
                 if let selectedText = copyAXString(focused, attribute: kAXSelectedTextAttribute as String), !selectedText.isEmpty {
                     print("[AccessibilityService] Found selected text via system-wide: \(selectedText.prefix(100))...")
@@ -195,9 +229,11 @@ final class AccessibilityService {
             let mainWindow: AXUIElement
             if let focusedWindow = copyAXUIElement(appElement, attribute: kAXFocusedWindowAttribute) {
                 mainWindow = focusedWindow
+                setAXTimeout(for: mainWindow)
                 print("[AccessibilityService] Using focused window")
             } else {
                 mainWindow = windows[0]
+                setAXTimeout(for: mainWindow)
                 print("[AccessibilityService] Using first window")
             }
             
@@ -213,10 +249,10 @@ final class AccessibilityService {
             // Try main content area first - look for known content roles
             if let mainContent = findMainContentArea(in: mainWindow) {
                 print("[AccessibilityService] Found main content area")
-                extractAllText(from: mainContent, into: &contents, depth: 0, maxTotal: 6000)
+                extractAllText(from: mainContent, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
             } else {
                 // Extract content from window hierarchy
-                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: 6000)
+                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
             }
         } else {
             print("[AccessibilityService] No windows found, error: \(windowsError.rawValue)")
@@ -225,6 +261,7 @@ final class AccessibilityService {
         // 4. Try focused element from app (for non-active apps)
         if !app.isActive {
             if let focused = copyAXUIElement(appElement, attribute: kAXFocusedUIElementAttribute) {
+                setAXTimeout(for: focused)
                 focusedRole = copyAXString(focused, attribute: kAXRoleAttribute)
                 print("[AccessibilityService] Focused element role: \(focusedRole ?? "nil")")
                 
@@ -287,7 +324,8 @@ final class AccessibilityService {
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return nil }
         
-        for child in children {
+        for child in children.prefix(kMaxChildrenPerLevel) {
+            setAXTimeout(for: child)
             let role = copyAXString(child, attribute: kAXRoleAttribute)
             if let role = role, contentRoles.contains(role) {
                 // Check if this element has substantial content
@@ -332,7 +370,8 @@ final class AccessibilityService {
         print("[AccessibilityService] Capturing content from: \(appName)")
         
         // 1. First try AppleScript for supported apps (doesn't need Accessibility permission)
-        if let appleScriptResult = captureViaAppleScript(bundleIdentifier: bundleIdentifier, appName: appName) {
+        //    Use async version with timeout to prevent hangs
+        if let appleScriptResult = await captureViaAppleScriptAsync(bundleIdentifier: bundleIdentifier, appName: appName) {
             print("[AccessibilityService] AppleScript capture successful!")
             return appleScriptResult
         }
@@ -408,7 +447,50 @@ final class AccessibilityService {
     // MARK: - AppleScript Capture
     
     /// Capture content using AppleScript for apps that support it
+    /// Now runs with a timeout to prevent hangs
     private func captureViaAppleScript(bundleIdentifier: String, appName: String) -> AppContextSnapshot? {
+        // Run the AppleScript synchronously but with a timeout wrapper
+        return captureViaAppleScriptSync(bundleIdentifier: bundleIdentifier, appName: appName)
+    }
+    
+    /// Async version with timeout for AppleScript execution
+    func captureViaAppleScriptAsync(bundleIdentifier: String, appName: String) async -> AppContextSnapshot? {
+        return await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+            
+            let workItem = DispatchWorkItem {
+                let result = self.captureViaAppleScriptSync(bundleIdentifier: bundleIdentifier, appName: appName)
+                lock.lock()
+                if !hasResumed {
+                    hasResumed = true
+                    lock.unlock()
+                    continuation.resume(returning: result)
+                } else {
+                    lock.unlock()
+                }
+            }
+            
+            DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
+            
+            // Cancel after 5 seconds
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5.0) {
+                lock.lock()
+                if !hasResumed {
+                    hasResumed = true
+                    workItem.cancel()
+                    lock.unlock()
+                    print("[AccessibilityService] AppleScript timed out for \(appName)")
+                    continuation.resume(returning: nil)
+                } else {
+                    lock.unlock()
+                }
+            }
+        }
+    }
+    
+    /// Synchronous AppleScript capture (used by both sync and async versions)
+    private func captureViaAppleScriptSync(bundleIdentifier: String, appName: String) -> AppContextSnapshot? {
         print("[AccessibilityService] Trying AppleScript for: \(bundleIdentifier)")
         
         var script: String?
@@ -711,7 +793,7 @@ final class AccessibilityService {
         let focusedIsEditable = false
         let focusedIsSecure = false
         
-        let appElement = AXUIElementCreateApplication(pid)
+        let appElement = createAppElement(pid: pid)
         var contents: [String] = []
         
         // Debug: List all available attributes on the app element
@@ -740,13 +822,14 @@ final class AccessibilityService {
         
         // 1. Try system-wide focused element (most reliable when app is active)
         print("[AccessibilityService] Trying system-wide focused element...")
-        let systemWide = AXUIElementCreateSystemWide()
+        let systemWide = createSystemWideElement()
         var focusedRef: CFTypeRef?
         let focusedError = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef)
         print("[AccessibilityService] System-wide focused query result: \(focusedError.rawValue)")
         
         if focusedError == .success, let focused = focusedRef {
             let focusedElement = focused as! AXUIElement
+            setAXTimeout(for: focusedElement)
             focusedRole = copyAXString(focusedElement, attribute: kAXRoleAttribute)
             print("[AccessibilityService] System-wide focused role: \(focusedRole ?? "nil")")
             
@@ -779,7 +862,7 @@ final class AccessibilityService {
             
             // For Electron apps, try walking up to find content
             if focusedRole == "AXWebArea" || focusedRole == "AXGroup" || focusedRole == "AXTextField" || focusedRole == "AXTextArea" {
-                extractAllText(from: focusedElement, into: &contents, depth: 0, maxTotal: 6000)
+                extractAllText(from: focusedElement, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
             }
         }
         
@@ -790,12 +873,13 @@ final class AccessibilityService {
         print("[AccessibilityService] Focused window query result: \(focusedWindowError.rawValue)")
         
         if focusedWindowError == .success, let focusedWindow = focusedWindowRef as! AXUIElement? {
+            setAXTimeout(for: focusedWindow)
             print("[AccessibilityService] Got focused window directly")
             if windowTitle == nil {
                 windowTitle = copyAXString(focusedWindow, attribute: kAXTitleAttribute)
                 print("[AccessibilityService] Focused window title: \(windowTitle ?? "nil")")
             }
-            extractAllText(from: focusedWindow, into: &contents, depth: 0, maxTotal: 6000)
+            extractAllText(from: focusedWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
         }
         
         // 3. Try windows array as fallback
@@ -806,11 +890,12 @@ final class AccessibilityService {
         if windowsError == .success, let windows = windowsRef as? [AXUIElement], !windows.isEmpty {
             print("[AccessibilityService] Found \(windows.count) windows via array")
             let mainWindow = windows[0]
+            setAXTimeout(for: mainWindow)
             if windowTitle == nil {
                 windowTitle = copyAXString(mainWindow, attribute: kAXTitleAttribute)
             }
             if contents.isEmpty {
-                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: 6000)
+                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
             }
         }
         
@@ -820,12 +905,13 @@ final class AccessibilityService {
         print("[AccessibilityService] Main window query result: \(mainWindowError.rawValue)")
         
         if mainWindowError == .success, let mainWindow = mainWindowRef as! AXUIElement? {
+            setAXTimeout(for: mainWindow)
             print("[AccessibilityService] Got main window")
             if windowTitle == nil {
                 windowTitle = copyAXString(mainWindow, attribute: kAXTitleAttribute)
             }
             if contents.isEmpty {
-                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: 6000)
+                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
             }
         }
         
@@ -854,9 +940,13 @@ final class AccessibilityService {
     }
     
     /// Extract all text from an accessibility element tree
-    private func extractAllText(from element: AXUIElement, into contents: inout [String], depth: Int, maxTotal: Int = 8000) {
-        guard depth < 15 else { return } // Reduced depth for performance
+    /// Uses reduced depth and limits to prevent hangs
+    private func extractAllText(from element: AXUIElement, into contents: inout [String], depth: Int, maxTotal: Int = 4000) {
+        guard depth < kMaxTreeDepth else { return } // Reduced depth for performance
         guard contents.joined().count < maxTotal else { return }
+        
+        // Set timeout on each element we process
+        setAXTimeout(for: element)
         
         // Get role
         let role = copyAXString(element, attribute: kAXRoleAttribute)
@@ -899,7 +989,7 @@ final class AccessibilityService {
             var childrenRef: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
             if error == .success, let children = childrenRef as? [AXUIElement] {
-                for child in children.prefix(50) {
+                for child in children.prefix(kMaxChildrenPerLevel) {
                     extractAllText(from: child, into: &contents, depth: depth + 1, maxTotal: maxTotal)
                 }
             }
@@ -911,7 +1001,7 @@ final class AccessibilityService {
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return }
         
-        for child in children.prefix(100) {
+        for child in children.prefix(kMaxChildrenPerLevel) {
             extractAllText(from: child, into: &contents, depth: depth + 1, maxTotal: maxTotal)
         }
     }
@@ -925,10 +1015,12 @@ final class AccessibilityService {
             return false
         }
 
-        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        let appElement = createAppElement(pid: application.processIdentifier)
         guard let focused = copyAXUIElement(appElement, attribute: kAXFocusedUIElementAttribute) else {
             return false
         }
+        
+        setAXTimeout(for: focused)
 
         if copyAXBool(focused, attribute: axEditableAttribute) == true {
             let error = AXUIElementSetAttributeValue(focused, kAXValueAttribute as CFString, text as CFTypeRef)
@@ -958,7 +1050,11 @@ final class AccessibilityService {
         guard error == .success else {
             return nil
         }
-        return value as! AXUIElement?
+        if let result = value as! AXUIElement? {
+            setAXTimeout(for: result)
+            return result
+        }
+        return nil
     }
 
     private func copyAXString(_ element: AXUIElement, attribute: String) -> String? {

@@ -2,6 +2,10 @@ import Foundation
 import AppKit
 import Combine
 
+// MARK: - Timeout Configuration
+private let kAppleScriptTimeout: TimeInterval = 5.0
+private let kCaptureInterval: TimeInterval = 5.0  // Increased from 3 to reduce overhead
+
 /// Cached content from an app
 struct CachedAppContent: Sendable {
     let snapshot: AppContextSnapshot
@@ -36,14 +40,15 @@ final class ContentCacheService: ObservableObject {
     /// Whether continuous capture is enabled
     @Published var isCaptureEnabled: Bool = true
     
-    /// Capture interval in seconds
-    let captureInterval: TimeInterval = 3.0
+    /// Capture interval in seconds (increased to reduce overhead)
+    let captureInterval: TimeInterval = kCaptureInterval
     
     /// Content expiration time (how long before content is considered stale)
     let contentExpirationTime: TimeInterval = 60.0
     
     private var captureTimer: Timer?
     private var workspaceObserver: NSObjectProtocol?
+    private var isCapturing: Bool = false  // Prevent overlapping captures
     private let accessibilityService = AccessibilityService()
     
     private init() {
@@ -182,6 +187,12 @@ final class ContentCacheService: ObservableObject {
     private func captureCurrentForegroundApp() async {
         guard isCaptureEnabled else { return }
         
+        // Prevent overlapping captures
+        guard !isCapturing else {
+            print("[ContentCacheService] Skipping capture - already in progress")
+            return
+        }
+        
         guard let frontmost = NSWorkspace.shared.frontmostApplication,
               let bundleId = frontmost.bundleIdentifier,
               let appName = frontmost.localizedName else {
@@ -193,6 +204,9 @@ final class ContentCacheService: ObservableObject {
             return
         }
         
+        isCapturing = true
+        defer { isCapturing = false }
+        
         // Update current foreground app
         currentForegroundApp = RunningApp(
             appName: appName,
@@ -201,7 +215,8 @@ final class ContentCacheService: ObservableObject {
         )
         
         // Try AppleScript first for supported apps (most reliable)
-        if let appleScriptSnapshot = captureViaAppleScript(bundleIdentifier: bundleId, appName: appName) {
+        // Use async version with timeout
+        if let appleScriptSnapshot = await captureViaAppleScriptAsync(bundleIdentifier: bundleId, appName: appName) {
             let cached = CachedAppContent(snapshot: appleScriptSnapshot)
             cache[bundleId] = cached
             let contentLength = appleScriptSnapshot.focusedValuePreview?.count ?? 0
@@ -254,7 +269,44 @@ final class ContentCacheService: ObservableObject {
     
     // MARK: - AppleScript Capture (copied from AccessibilityService for background capture)
     
-    private func captureViaAppleScript(bundleIdentifier: String, appName: String) -> AppContextSnapshot? {
+    /// Async version with timeout for AppleScript execution
+    private func captureViaAppleScriptAsync(bundleIdentifier: String, appName: String) async -> AppContextSnapshot? {
+        return await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+            
+            let workItem = DispatchWorkItem { [self] in
+                let result = self.captureViaAppleScriptSync(bundleIdentifier: bundleIdentifier, appName: appName)
+                lock.lock()
+                if !hasResumed {
+                    hasResumed = true
+                    lock.unlock()
+                    continuation.resume(returning: result)
+                } else {
+                    lock.unlock()
+                }
+            }
+            
+            DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
+            
+            // Cancel after timeout
+            DispatchQueue.global().asyncAfter(deadline: .now() + kAppleScriptTimeout) {
+                lock.lock()
+                if !hasResumed {
+                    hasResumed = true
+                    workItem.cancel()
+                    lock.unlock()
+                    print("[ContentCacheService] AppleScript timed out for \(appName)")
+                    continuation.resume(returning: nil)
+                } else {
+                    lock.unlock()
+                }
+            }
+        }
+    }
+    
+    /// Synchronous AppleScript capture
+    private func captureViaAppleScriptSync(bundleIdentifier: String, appName: String) -> AppContextSnapshot? {
         var script: String?
         var windowTitle: String?
         
