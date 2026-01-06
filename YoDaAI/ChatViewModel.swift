@@ -9,10 +9,13 @@ final class ChatViewModel: ObservableObject {
     @Published var lastErrorMessage: String?
     @Published var alwaysAttachAppContext: Bool = true
     @Published var streamingMessageID: UUID?  // Track the message being streamed
+    @Published var mentionedApps: [RunningApp] = []  // Apps mentioned with @
+    @Published var showMentionPicker: Bool = false  // Show @ mention picker
+    @Published var mentionSearchText: String = ""  // Filter text for mention picker
     var activeThreadID: UUID?
 
     private let client: OpenAICompatibleClient
-    private let accessibilityService: AccessibilityService
+    let accessibilityService: AccessibilityService
     private let permissionsStore: AppPermissionsStore
 
     init(
@@ -23,6 +26,48 @@ final class ChatViewModel: ObservableObject {
         self.client = client
         self.accessibilityService = accessibilityService
         self.permissionsStore = permissionsStore
+    }
+    
+    // MARK: - @ Mention Support
+    
+    /// Get list of running apps for @ mention picker
+    func getRunningApps() -> [RunningApp] {
+        accessibilityService.listRunningApps()
+    }
+    
+    /// Get filtered running apps based on search text
+    func getFilteredRunningApps() -> [RunningApp] {
+        let apps = getRunningApps()
+        guard !mentionSearchText.isEmpty else { return apps }
+        return apps.filter { $0.appName.localizedCaseInsensitiveContains(mentionSearchText) }
+    }
+    
+    /// Add an app to the mentioned apps list
+    func addMention(_ app: RunningApp) {
+        guard !mentionedApps.contains(where: { $0.bundleIdentifier == app.bundleIdentifier }) else { return }
+        mentionedApps.append(app)
+        mentionSearchText = ""
+        showMentionPicker = false
+    }
+    
+    /// Remove an app from the mentioned apps list
+    func removeMention(_ app: RunningApp) {
+        mentionedApps.removeAll { $0.bundleIdentifier == app.bundleIdentifier }
+    }
+    
+    /// Clear all mentions
+    func clearMentions() {
+        mentionedApps.removeAll()
+    }
+    
+    /// Check if user typed @ and should show picker
+    func checkForMentionTrigger() {
+        // Check if user typed @ at the end or after a space
+        let text = composerText
+        if text.hasSuffix("@") || text.hasSuffix(" @") {
+            showMentionPicker = true
+            mentionSearchText = ""
+        }
     }
 
 
@@ -73,7 +118,12 @@ final class ChatViewModel: ObservableObject {
 
         isSending = true
         lastErrorMessage = nil
+        
+        // Capture mentioned apps before clearing
+        let appsToCapture = mentionedApps
+        
         composerText = ""
+        mentionedApps = []
 
         do {
             let provider = try ensureDefaultProvider(in: context)
@@ -83,7 +133,7 @@ final class ChatViewModel: ObservableObject {
             context.insert(userMessage)
             try context.save()
 
-            try await sendAssistantResponse(for: thread, provider: provider, in: context)
+            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: appsToCapture, in: context)
             
             // Auto-generate thread title from first user message if still "New Chat"
             if thread.title == "New Chat" {
@@ -113,7 +163,7 @@ final class ChatViewModel: ObservableObject {
                 try context.save()
             }
             
-            try await sendAssistantResponse(for: thread, provider: provider, in: context)
+            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
         } catch {
             lastErrorMessage = String(describing: error)
         }
@@ -147,7 +197,7 @@ final class ChatViewModel: ObservableObject {
             }
             try context.save()
             
-            try await sendAssistantResponse(for: thread, provider: provider, in: context)
+            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
         } catch {
             lastErrorMessage = String(describing: error)
         }
@@ -161,24 +211,48 @@ final class ChatViewModel: ObservableObject {
         try? context.save()
     }
     
-    private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, in context: ModelContext) async throws {
+    private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], in context: ModelContext) async throws {
         let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
         var requestMessages = history.map { OpenAIChatMessage(role: $0.roleRawValue, content: $0.content) }
 
-        if alwaysAttachAppContext {
-            let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true)
-
-            if let snapshot {
+        // Add context from @ mentioned apps
+        for app in mentionedApps {
+            if let snapshot = accessibilityService.captureContext(for: app.bundleIdentifier, promptIfNeeded: true) {
                 let rule = try permissionsStore.ensureRule(
                     for: snapshot.bundleIdentifier,
                     displayName: snapshot.appName,
                     in: context
                 )
-
+                
                 if rule.allowContext {
-                    let contextText = formatAppContext(snapshot)
+                    let contextText = formatAppContext(snapshot, isMentioned: true)
                     if !contextText.isEmpty {
                         requestMessages.append(OpenAIChatMessage(role: "system", content: contextText))
+                    }
+                }
+            }
+        }
+
+        // Also add frontmost app context if enabled (and not already mentioned)
+        if alwaysAttachAppContext {
+            let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true)
+
+            if let snapshot {
+                // Skip if this app was already mentioned
+                let alreadyMentioned = mentionedApps.contains { $0.bundleIdentifier == snapshot.bundleIdentifier }
+                
+                if !alreadyMentioned {
+                    let rule = try permissionsStore.ensureRule(
+                        for: snapshot.bundleIdentifier,
+                        displayName: snapshot.appName,
+                        in: context
+                    )
+
+                    if rule.allowContext {
+                        let contextText = formatAppContext(snapshot)
+                        if !contextText.isEmpty {
+                            requestMessages.append(OpenAIChatMessage(role: "system", content: contextText))
+                        }
                     }
                 }
             }
@@ -255,11 +329,15 @@ final class ChatViewModel: ObservableObject {
         return prefix + "..."
     }
 
-    private func formatAppContext(_ snapshot: AppContextSnapshot?) -> String {
+    private func formatAppContext(_ snapshot: AppContextSnapshot?, isMentioned: Bool = false) -> String {
         guard let snapshot else { return "" }
 
         var lines: [String] = []
-        lines.append("YouDaAI app context (frontmost macOS app):")
+        if isMentioned {
+            lines.append("YoDaAI @mentioned app context:")
+        } else {
+            lines.append("YoDaAI app context (frontmost macOS app):")
+        }
         lines.append("- App: \(snapshot.appName) (\(snapshot.bundleIdentifier))")
 
         if let title = snapshot.windowTitle, !title.isEmpty {
@@ -271,9 +349,9 @@ final class ChatViewModel: ObservableObject {
         }
 
         if snapshot.focusedIsSecure {
-            lines.append("- Focused value preview: (redacted: secure field)")
+            lines.append("- Content: (redacted: secure field)")
         } else if let preview = snapshot.focusedValuePreview, !preview.isEmpty {
-            lines.append("- Focused value preview: \(preview)")
+            lines.append("- Content: \(preview)")
         }
 
         lines.append("Instruction: Use this context only to answer the user's request, and do not invent UI details.")

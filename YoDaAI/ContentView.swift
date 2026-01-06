@@ -643,28 +643,45 @@ private struct ComposerView: View {
             Divider()
 
             VStack(spacing: 8) {
+                // Mentioned apps chips
+                if !viewModel.mentionedApps.isEmpty {
+                    MentionChipsView(viewModel: viewModel)
+                }
+                
                 // Text Input
-                TextField("Ask Anything, @ for context, / for models", text: $viewModel.composerText, axis: .vertical)
+                TextField("Ask anything, @ to mention apps", text: $viewModel.composerText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
                     .font(.body)
                     .focused($isFocused)
+                    .onChange(of: viewModel.composerText) { _, newValue in
+                        // Check if user typed @
+                        if newValue.hasSuffix("@") {
+                            viewModel.showMentionPicker = true
+                            viewModel.mentionSearchText = ""
+                        }
+                    }
                     .onSubmit {
                         if !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty && !NSEvent.modifierFlags.contains(.shift) {
                             sendMessage()
                         }
+                    }
+                    .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .top) {
+                        MentionPickerPopover(viewModel: viewModel)
                     }
 
                 // Toolbar row
                 HStack(spacing: 16) {
                     // Left icons
                     HStack(spacing: 12) {
-                        Button { } label: {
+                        Button {
+                            viewModel.showMentionPicker = true
+                        } label: {
                             Image(systemName: "at")
                         }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Add context")
+                        .foregroundStyle(viewModel.mentionedApps.isEmpty ? Color.secondary : Color.accentColor)
+                        .help("Add app context (@)")
 
                         Button {
                             viewModel.alwaysAttachAppContext.toggle()
@@ -673,7 +690,7 @@ private struct ComposerView: View {
                         }
                         .buttonStyle(.borderless)
                         .foregroundStyle(viewModel.alwaysAttachAppContext ? .yellow : .secondary)
-                        .help(viewModel.alwaysAttachAppContext ? "App context: On" : "App context: Off")
+                        .help(viewModel.alwaysAttachAppContext ? "Auto-attach frontmost app: On" : "Auto-attach frontmost app: Off")
 
                         Button { } label: {
                             Image(systemName: "paperclip")
@@ -730,8 +747,145 @@ private struct ComposerView: View {
 
     private func sendMessage() {
         guard canSend else { return }
+        // Remove trailing @ if user was about to mention
+        if viewModel.composerText.hasSuffix("@") {
+            viewModel.composerText = String(viewModel.composerText.dropLast())
+        }
         viewModel.activeThreadID = thread.id
         Task { await viewModel.send(in: modelContext) }
+    }
+}
+
+// MARK: - Mention Chips View
+private struct MentionChipsView: View {
+    @ObservedObject var viewModel: ChatViewModel
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(viewModel.mentionedApps) { app in
+                    HStack(spacing: 4) {
+                        if let icon = app.icon {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .frame(width: 16, height: 16)
+                        }
+                        Text("@\(app.appName)")
+                            .font(.caption)
+                        Button {
+                            viewModel.removeMention(app)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption2)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.accentColor.opacity(0.15))
+                    .clipShape(Capsule())
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Mention Picker Popover
+private struct MentionPickerPopover: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    
+    private var filteredApps: [RunningApp] {
+        let apps = viewModel.getRunningApps()
+        guard !searchText.isEmpty else { return apps }
+        return apps.filter { $0.appName.localizedCaseInsensitiveContains(searchText) }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Mention App")
+                    .font(.headline)
+                Spacer()
+                Text("Include app content in your message")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            
+            // Search field
+            TextField("Search apps...", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            
+            Divider()
+            
+            // App list
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if filteredApps.isEmpty {
+                        Text("No running apps found")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    } else {
+                        ForEach(filteredApps) { app in
+                            Button {
+                                selectApp(app)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if let icon = app.icon {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .frame(width: 24, height: 24)
+                                    } else {
+                                        Image(systemName: "app.fill")
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(app.appName)
+                                            .font(.body)
+                                        Text(app.bundleIdentifier)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if viewModel.mentionedApps.contains(where: { $0.bundleIdentifier == app.bundleIdentifier }) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.green)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.plain)
+                            .background(Color.primary.opacity(0.001)) // For hover
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 300)
+        }
+        .frame(width: 320)
+    }
+    
+    private func selectApp(_ app: RunningApp) {
+        // Remove the @ from composer if it's there
+        if viewModel.composerText.hasSuffix("@") {
+            viewModel.composerText = String(viewModel.composerText.dropLast())
+        }
+        
+        viewModel.addMention(app)
+        dismiss()
     }
 }
 
