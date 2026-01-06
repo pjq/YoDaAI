@@ -2240,39 +2240,41 @@ private struct PermissionsSettingsTab: View {
             }
             
             Section("Automation Permission") {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "gearshape.2")
-                                .foregroundStyle(.blue)
-                                .font(.title2)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gearshape.2")
+                            .foregroundStyle(.blue)
+                            .font(.title2)
+                        VStack(alignment: .leading, spacing: 2) {
                             Text("Required for App Control")
                                 .font(.headline)
+                            Text("Click each app below to trigger the permission request")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Text("Allows YoDaAI to capture content from Safari, Chrome, Notes, Mail, and TextEdit via AppleScript")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    
-                    Button("Open Settings") {
-                        openAutomationSettings()
-                    }
-                    .buttonStyle(.bordered)
                 }
                 .padding(.vertical, 4)
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("How to enable:")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                    Text("1. Click \"Open Settings\" to open System Settings")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("2. Find YoDaAI in the list")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("3. Enable toggles for apps you want YoDaAI to control (Safari, Chrome, etc.)")
+                // App permission request buttons
+                AutomationAppRow(appName: "Safari", bundleId: "com.apple.Safari", icon: "safari")
+                AutomationAppRow(appName: "Google Chrome", bundleId: "com.google.Chrome", icon: "globe")
+                AutomationAppRow(appName: "Notes", bundleId: "com.apple.Notes", icon: "note.text")
+                AutomationAppRow(appName: "Mail", bundleId: "com.apple.mail", icon: "envelope")
+                AutomationAppRow(appName: "TextEdit", bundleId: "com.apple.TextEdit", icon: "doc.text")
+                
+                HStack {
+                    Spacer()
+                    Button("Open Automation Settings") {
+                        openAutomationSettings()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(.top, 4)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Note: Permission dialogs only appear once per app. If you previously denied, use \"Open Automation Settings\" to enable manually.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2380,6 +2382,187 @@ private struct PermissionsSettingsTab: View {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+// MARK: - Automation App Row
+private struct AutomationAppRow: View {
+    let appName: String
+    let bundleId: String
+    let icon: String
+    
+    @State private var status: PermissionStatus = .unknown
+    @State private var isRequesting = false
+    
+    enum PermissionStatus {
+        case unknown
+        case requesting
+        case granted
+        case denied
+        case notInstalled
+    }
+    
+    var body: some View {
+        HStack {
+            Image(systemName: icon)
+                .frame(width: 20)
+                .foregroundStyle(.secondary)
+            
+            Text(appName)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            switch status {
+            case .unknown:
+                Button("Request Permission") {
+                    requestPermission()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isRequesting)
+                
+            case .requesting:
+                ProgressView()
+                    .controlSize(.small)
+                Text("Requesting...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+            case .granted:
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("Granted")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+                
+            case .denied:
+                HStack(spacing: 4) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                    Text("Denied")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                
+            case .notInstalled:
+                HStack(spacing: 4) {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text("Not Installed")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+    
+    private func requestPermission() {
+        isRequesting = true
+        status = .requesting
+        
+        // Run AppleScript in background to trigger permission dialog
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = triggerAutomationPermission(for: bundleId, appName: appName)
+            
+            DispatchQueue.main.async {
+                isRequesting = false
+                status = result
+            }
+        }
+    }
+    
+    private func triggerAutomationPermission(for bundleId: String, appName: String) -> PermissionStatus {
+        // Simple AppleScript that triggers the permission dialog
+        // We just try to get a basic property from the app
+        let script: String
+        
+        switch bundleId {
+        case "com.apple.Safari":
+            script = """
+            tell application id "com.apple.Safari"
+                try
+                    set windowCount to count of windows
+                    return "granted"
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+            """
+        case "com.google.Chrome":
+            script = """
+            tell application id "com.google.Chrome"
+                try
+                    set windowCount to count of windows
+                    return "granted"
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+            """
+        case "com.apple.Notes":
+            script = """
+            tell application id "com.apple.Notes"
+                try
+                    set noteCount to count of notes
+                    return "granted"
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+            """
+        case "com.apple.mail":
+            script = """
+            tell application id "com.apple.mail"
+                try
+                    set inboxCount to count of mailboxes
+                    return "granted"
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+            """
+        case "com.apple.TextEdit":
+            script = """
+            tell application id "com.apple.TextEdit"
+                try
+                    set docCount to count of documents
+                    return "granted"
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+            """
+        default:
+            return .unknown
+        }
+        
+        var error: NSDictionary?
+        let appleScript = NSAppleScript(source: script)
+        let result = appleScript?.executeAndReturnError(&error)
+        
+        if let error = error {
+            let errorNumber = error["NSAppleScriptErrorNumber"] as? Int ?? 0
+            print("[AutomationAppRow] AppleScript error for \(appName): [\(errorNumber)] \(error["NSAppleScriptErrorMessage"] ?? "")")
+            
+            switch errorNumber {
+            case -1743:
+                // Not authorized - user denied or hasn't responded yet
+                return .denied
+            case -600:
+                // App not running - but permission might still be granted
+                // Try to launch and test again
+                return .unknown
+            default:
+                return .denied
+            }
+        }
+        
+        if let resultString = result?.stringValue, resultString == "granted" {
+            return .granted
+        }
+        
+        return .unknown
     }
 }
 
