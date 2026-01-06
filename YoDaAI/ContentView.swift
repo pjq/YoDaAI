@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import Combine
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
@@ -202,6 +203,17 @@ private struct ChatDetailView: View {
         } message: {
             Text(viewModel.lastErrorMessage ?? "Unknown error")
         }
+        .alert("Image Error", isPresented: Binding(get: {
+            viewModel.imageErrorMessage != nil
+        }, set: { newValue in
+            if !newValue { viewModel.imageErrorMessage = nil }
+        })) {
+            Button("OK", role: .cancel) {
+                viewModel.imageErrorMessage = nil
+            }
+        } message: {
+            Text(viewModel.imageErrorMessage ?? "Unknown error")
+        }
     }
 }
 
@@ -401,18 +413,27 @@ private struct MessageRowView: View {
             }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
+                // Show attached images
+                if !message.attachments.isEmpty {
+                    MessageImageGridView(attachments: message.attachments, alignment: message.role == .user ? .trailing : .leading)
+                }
+
                 if message.role == .user {
                     // User message: right-aligned bubble
-                    Text(message.content)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .textSelection(.enabled)
+                    if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(message.content)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .textSelection(.enabled)
+                    }
                 } else {
                     // Assistant message: Markdown rendered
-                    MarkdownTextView(content: message.content)
-                        .textSelection(.enabled)
+                    if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        MarkdownTextView(content: message.content)
+                            .textSelection(.enabled)
+                    }
                 }
 
                 // Action buttons on hover
@@ -473,6 +494,241 @@ private struct MessageRowView: View {
             }
         } message: {
             Text("This message will be permanently deleted.")
+        }
+    }
+}
+
+// MARK: - Message Image Grid View
+
+/// Grid view for displaying image attachments in messages
+private struct MessageImageGridView: View {
+    let attachments: [ImageAttachment]
+    let alignment: HorizontalAlignment
+    @State private var loadedImages: [UUID: NSImage] = [:]
+    @State private var previewImage: NSImage?
+    @State private var showPreview = false
+
+    var body: some View {
+        HStack {
+            if alignment == .trailing {
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: alignment == .trailing ? .trailing : .leading, spacing: 8) {
+                ForEach(attachments) { attachment in
+                    if let image = loadedImages[attachment.id] {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 300, maxHeight: 300)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                            )
+                            .onTapGesture {
+                                previewImage = image
+                                showPreview = true
+                            }
+                            .help("Click to view full size")
+                    } else {
+                        ProgressView()
+                            .frame(width: 150, height: 150)
+                    }
+                }
+            }
+
+            if alignment == .leading {
+                Spacer(minLength: 0)
+            }
+        }
+        .task {
+            await loadImages()
+        }
+        .onChange(of: showPreview) { _, isShowing in
+            if isShowing, let image = previewImage {
+                showImagePreviewWindow(image: image)
+            }
+        }
+    }
+
+    private func showImagePreviewWindow(image: NSImage) {
+        let previewWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.borderless, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        previewWindow.backgroundColor = .black
+        previewWindow.isOpaque = false
+        previewWindow.level = .floating
+        previewWindow.isMovableByWindowBackground = false
+
+        let hostingView = NSHostingView(rootView: ImagePreviewView(image: image, onClose: {
+            previewWindow.close()
+            showPreview = false
+        }))
+        previewWindow.contentView = hostingView
+        previewWindow.center()
+        previewWindow.makeKeyAndOrderFront(nil)
+    }
+
+    private func loadImages() async {
+        for attachment in attachments {
+            do {
+                let data = try ImageStorageService.shared.loadImage(filePath: attachment.filePath)
+                if let nsImage = NSImage(data: data) {
+                    await MainActor.run {
+                        loadedImages[attachment.id] = nsImage
+                    }
+                }
+            } catch {
+                print("Failed to load image: \(error)")
+            }
+        }
+    }
+}
+
+// MARK: - Image Preview View
+
+/// Full-screen image preview with zoom support
+private struct ImagePreviewView: View {
+    let image: NSImage
+    let onClose: () -> Void
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            // Dark background
+            Color.black
+                .ignoresSafeArea()
+                .onTapGesture {
+                    onClose()
+                }
+
+            // Image with zoom and pan
+            VStack {
+                Spacer()
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(scale)
+                    .offset(offset)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                lastScale = value
+                                scale = min(max(scale * delta, 0.5), 5.0)
+                            }
+                            .onEnded { _ in
+                                lastScale = 1.0
+                                // Reset if zoomed out too much
+                                if scale < 1.0 {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        scale = 1.0
+                                        offset = .zero
+                                    }
+                                }
+                            }
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                offset = CGSize(
+                                    width: lastOffset.width + value.translation.width,
+                                    height: lastOffset.height + value.translation.height
+                                )
+                            }
+                            .onEnded { _ in
+                                lastOffset = offset
+                            }
+                    )
+                Spacer()
+            }
+
+            // Controls overlay
+            VStack {
+                HStack {
+                    Spacer()
+
+                    // Close button
+                    Button {
+                        onClose()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .shadow(radius: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close (or click background)")
+                    .padding()
+                }
+
+                Spacer()
+
+                // Zoom controls
+                HStack(spacing: 20) {
+                    // Zoom out
+                    Button {
+                        withAnimation(.spring(response: 0.3)) {
+                            scale = max(scale * 0.8, 0.5)
+                        }
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Zoom out")
+
+                    // Reset zoom
+                    Button {
+                        withAnimation(.spring(response: 0.3)) {
+                            scale = 1.0
+                            offset = .zero
+                            lastOffset = .zero
+                        }
+                    } label: {
+                        Text("\(Int(scale * 100))%")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reset zoom")
+
+                    // Zoom in
+                    Button {
+                        withAnimation(.spring(response: 0.3)) {
+                            scale = min(scale * 1.25, 5.0)
+                        }
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Zoom in")
+                }
+                .padding()
+                .background(Color.black.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 30)
+            }
+        }
+        .onAppear {
+            // Enable keyboard shortcuts
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 { // Escape key
+                    onClose()
+                    return nil
+                }
+                return event
+            }
         }
     }
 }
@@ -633,6 +889,7 @@ private struct ComposerView: View {
     let providers: [LLMProvider]
     @FocusState private var isFocused: Bool
     @State private var showModelPicker = false
+    @State private var showFilePicker = false
 
     private var defaultProvider: LLMProvider? {
         providers.first(where: { $0.isDefault }) ?? providers.first
@@ -643,11 +900,17 @@ private struct ComposerView: View {
             Divider()
 
             VStack(spacing: 8) {
+                // Image thumbnails (if any)
+                if !viewModel.pendingImages.isEmpty {
+                    ImageThumbnailRow(viewModel: viewModel)
+                    Divider()
+                }
+
                 // Mentioned apps chips
                 if !viewModel.mentionedApps.isEmpty {
                     MentionChipsView(viewModel: viewModel)
                 }
-                
+
                 // Text Input
                 TextField("Ask anything, @ to mention apps", text: $viewModel.composerText, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -665,6 +928,10 @@ private struct ComposerView: View {
                         if !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty && !NSEvent.modifierFlags.contains(.shift) {
                             sendMessage()
                         }
+                    }
+                    .background(PasteInterceptor(onPaste: handleDirectPaste))
+                    .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+                        return handleDrop(providers: providers)
                     }
                     .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .top) {
                         MentionPickerPopover(viewModel: viewModel)
@@ -692,12 +959,21 @@ private struct ComposerView: View {
                         .foregroundStyle(viewModel.alwaysAttachAppContext ? .yellow : .secondary)
                         .help(viewModel.alwaysAttachAppContext ? "Auto-attach frontmost app: On" : "Auto-attach frontmost app: Off")
 
-                        Button { } label: {
+                        Button {
+                            showFilePicker = true
+                        } label: {
                             Image(systemName: "paperclip")
                         }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Attach file")
+                        .foregroundStyle(viewModel.pendingImages.isEmpty ? .secondary : Color.accentColor)
+                        .help("Attach image")
+                        .fileImporter(
+                            isPresented: $showFilePicker,
+                            allowedContentTypes: [.image],
+                            allowsMultipleSelection: true
+                        ) { result in
+                            handleFileSelection(result: result)
+                        }
                     }
 
                     // Model selector (clickable)
@@ -742,7 +1018,8 @@ private struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        !viewModel.isSending && !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty
+        // Allow sending with images even if text is empty
+        !viewModel.isSending && (!viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty || !viewModel.pendingImages.isEmpty)
     }
 
     private func sendMessage() {
@@ -753,6 +1030,104 @@ private struct ComposerView: View {
         }
         viewModel.activeThreadID = thread.id
         Task { await viewModel.send(in: modelContext) }
+    }
+
+    // MARK: - Image Handling
+
+    /// Handle direct paste from pasteboard (Cmd+V)
+    private func handleDirectPaste() {
+        let pasteboard = NSPasteboard.general
+
+        // Try to get image from pasteboard
+        // Check for various image types that screenshots might use
+        if let image = NSImage(pasteboard: pasteboard) {
+            // Convert to PNG data
+            if let pngData = image.pngData() {
+                viewModel.addPendingImage(data: pngData, fileName: "pasted-image.png", mimeType: "image/png")
+            }
+        } else if let types = pasteboard.types,
+                  types.contains(where: { $0.rawValue.contains("image") || $0.rawValue.contains("png") || $0.rawValue.contains("tiff") }) {
+            // Fallback: try to read raw data
+            for type in types {
+                if let data = pasteboard.data(forType: type),
+                   let image = NSImage(data: data),
+                   let pngData = image.pngData() {
+                    viewModel.addPendingImage(data: pngData, fileName: "pasted-image.png", mimeType: "image/png")
+                    break
+                }
+            }
+        }
+    }
+
+    /// Handle drag and drop
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        var urls: [URL] = []
+        let group = DispatchGroup()
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier("public.file-url") {
+                group.enter()
+                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, error in
+                    defer { group.leave() }
+                    guard let data = item as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil),
+                          url.isFileURL else { return }
+                    urls.append(url)
+                }
+            }
+        }
+
+        group.notify(queue: .main) {
+            viewModel.addImagesFromURLs(urls)
+        }
+
+        return true
+    }
+
+    /// Handle file picker selection
+    private func handleFileSelection(result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            viewModel.addImagesFromURLs(urls)
+        case .failure(let error):
+            viewModel.imageErrorMessage = "File selection error: \(error.localizedDescription)"
+        }
+    }
+}
+
+// MARK: - Paste Interceptor
+
+/// NSView wrapper to intercept paste commands
+private struct PasteInterceptor: NSViewRepresentable {
+    let onPaste: () -> Void
+
+    func makeNSView(context: Context) -> PasteHandlerView {
+        let view = PasteHandlerView()
+        view.onPaste = onPaste
+        return view
+    }
+
+    func updateNSView(_ nsView: PasteHandlerView, context: Context) {
+        nsView.onPaste = onPaste
+    }
+
+    class PasteHandlerView: NSView {
+        var onPaste: (() -> Void)?
+
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            // Check for Cmd+V
+            if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+                // Check if pasteboard has image
+                let pasteboard = NSPasteboard.general
+                if NSImage(pasteboard: pasteboard) != nil {
+                    onPaste?()
+                    return true // Consume event
+                }
+            }
+            return super.performKeyEquivalent(with: event)
+        }
+
+        override var acceptsFirstResponder: Bool { true }
     }
 }
 
@@ -865,7 +1240,7 @@ private struct MentionChipView: View {
                             Text("No content captured")
                                 .font(.headline)
                                 .foregroundStyle(.secondary)
-                            Text("Make sure the app has visible text content.\nTry opening a document, chat, or web page.")
+                            Text("Click refresh to capture content.\nThe app will briefly activate to read its content.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -902,10 +1277,71 @@ private struct MentionChipView: View {
         isLoading = true
         hasLoadedOnce = true
         Task { @MainActor in
-            let snapshot = viewModel.accessibilityService.captureContext(for: app.bundleIdentifier, promptIfNeeded: false)
+            // Use the activation method to briefly switch to the app and capture content
+            let snapshot = await viewModel.accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: false)
             previewContent = snapshot?.focusedValuePreview
             windowTitle = snapshot?.windowTitle
             isLoading = false
+        }
+    }
+}
+
+// MARK: - Image Thumbnail Views
+
+/// Horizontal scroll view showing pending images above composer
+private struct ImageThumbnailRow: View {
+    @ObservedObject var viewModel: ChatViewModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(viewModel.pendingImages) { image in
+                    ImageThumbnailView(image: image, viewModel: viewModel)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+}
+
+/// Individual image thumbnail with remove button
+private struct ImageThumbnailView: View {
+    let image: ChatViewModel.PendingImage
+    @ObservedObject var viewModel: ChatViewModel
+    @State private var isHovering = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            // Thumbnail
+            if let thumbnail = image.thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+            }
+
+            // Remove button (on hover)
+            if isHovering {
+                Button {
+                    viewModel.removePendingImage(image)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.white)
+                        .background(Circle().fill(Color.red))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 8, y: -8)
+            }
+        }
+        .onHover { hovering in
+            isHovering = hovering
         }
     }
 }
@@ -1398,6 +1834,7 @@ private struct PermissionsSettingsTab: View {
     private var permissionRules: [AppPermissionRule]
     
     @State private var isAccessibilityGranted: Bool = AXIsProcessTrusted()
+    @State private var refreshTimer: Timer?
 
     var body: some View {
         Form {
@@ -1417,6 +1854,15 @@ private struct PermissionsSettingsTab: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    
+                    // Refresh button
+                    Button {
+                        checkAccessibilityPermission()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh status")
                     
                     if !isAccessibilityGranted {
                         Button("Grant Access") {
@@ -1443,7 +1889,7 @@ private struct PermissionsSettingsTab: View {
                         Text("2. Find YoDaAI in the list and enable the toggle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("3. You may need to restart YoDaAI after granting permission")
+                        Text("3. Click the refresh button or restart YoDaAI")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1503,11 +1949,29 @@ private struct PermissionsSettingsTab: View {
         .formStyle(.grouped)
         .onAppear {
             checkAccessibilityPermission()
+            startRefreshTimer()
+        }
+        .onDisappear {
+            stopRefreshTimer()
         }
     }
     
     private func checkAccessibilityPermission() {
         isAccessibilityGranted = AXIsProcessTrusted()
+    }
+    
+    private func startRefreshTimer() {
+        // Check every 2 seconds while the view is visible
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            DispatchQueue.main.async {
+                checkAccessibilityPermission()
+            }
+        }
+    }
+    
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
     
     private func requestAccessibilityPermission() {
@@ -1519,11 +1983,6 @@ private struct PermissionsSettingsTab: View {
         // In that case, open System Settings directly
         if !result {
             openAccessibilitySettings()
-        }
-        
-        // Check again after a delay (user might grant it)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            checkAccessibilityPermission()
         }
     }
     

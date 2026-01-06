@@ -40,6 +40,9 @@ final class ChatMessage {
 
     var thread: ChatThread?
 
+    @Relationship(deleteRule: .cascade, inverse: \ImageAttachment.message)
+    var attachments: [ImageAttachment]
+
     var role: Role {
         get { Role(rawValue: roleRawValue) ?? .user }
         set { roleRawValue = newValue.rawValue }
@@ -50,12 +53,14 @@ final class ChatMessage {
         createdAt: Date = Date(),
         role: Role,
         content: String,
-        thread: ChatThread? = nil
+        thread: ChatThread? = nil,
+        attachments: [ImageAttachment] = []
     ) {
         self.id = id
         self.createdAt = createdAt
         self.roleRawValue = role.rawValue
         self.content = content
         self.thread = thread
+        self.attachments = attachments
     }
 }

@@ -1,18 +1,36 @@
 import Foundation
 import Combine
 import SwiftData
+import AppKit
 
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var composerText: String = ""
     @Published var isSending: Bool = false
     @Published var lastErrorMessage: String?
+    @Published var imageErrorMessage: String?  // Error message for image operations
     @Published var alwaysAttachAppContext: Bool = true
     @Published var streamingMessageID: UUID?  // Track the message being streamed
     @Published var mentionedApps: [RunningApp] = []  // Apps mentioned with @
     @Published var showMentionPicker: Bool = false  // Show @ mention picker
     @Published var mentionSearchText: String = ""  // Filter text for mention picker
+    @Published var pendingImages: [PendingImage] = []  // Images being composed
     var activeThreadID: UUID?
+
+    // MARK: - Pending Image Model
+
+    /// Temporary image data before sending
+    struct PendingImage: Identifiable, Equatable {
+        let id: UUID
+        let data: Data
+        let fileName: String
+        let mimeType: String
+        let thumbnail: NSImage?
+
+        static func == (lhs: PendingImage, rhs: PendingImage) -> Bool {
+            lhs.id == rhs.id
+        }
+    }
 
     private let client: OpenAICompatibleClient
     let accessibilityService: AccessibilityService
@@ -70,6 +88,93 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Image Attachment Methods
+
+    /// Add image from pasteboard (Cmd+V)
+    func addImageFromPasteboard() {
+        let pasteboard = NSPasteboard.general
+
+        // Check for image types
+        let imageTypes = [NSPasteboard.PasteboardType.png, NSPasteboard.PasteboardType.tiff]
+        guard let type = pasteboard.availableType(from: imageTypes) else { return }
+
+        guard let data = pasteboard.data(forType: type) else { return }
+
+        // Convert to PNG if needed
+        if let nsImage = NSImage(data: data) {
+            if let pngData = nsImage.pngData() {
+                addPendingImage(data: pngData, fileName: "pasted-image.png", mimeType: "image/png")
+            }
+        }
+    }
+
+    /// Add images from file URLs (file picker or drag-drop)
+    func addImagesFromURLs(_ urls: [URL]) {
+        for url in urls {
+            guard url.startAccessingSecurityScopedResource() else { continue }
+            defer { url.stopAccessingSecurityScopedResource() }
+
+            do {
+                let data = try Data(contentsOf: url)
+                let fileName = url.lastPathComponent
+                let mimeType = getMimeType(for: url)
+                addPendingImage(data: data, fileName: fileName, mimeType: mimeType)
+            } catch {
+                imageErrorMessage = "Failed to load image: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Add a pending image (internal)
+    func addPendingImage(data: Data, fileName: String, mimeType: String) {
+        // Validate with ImageStorageService
+        do {
+            guard let nsImage = NSImage(data: data) else {
+                imageErrorMessage = "Invalid image format"
+                return
+            }
+
+            // Check file size (20MB limit)
+            let fileSizeBytes = data.count
+            guard fileSizeBytes <= 20 * 1024 * 1024 else {
+                imageErrorMessage = "Image exceeds 20MB limit"
+                return
+            }
+
+            // Create thumbnail
+            let thumbnail = nsImage.resized(to: NSSize(width: 120, height: 120))
+
+            let pending = PendingImage(
+                id: UUID(),
+                data: data,
+                fileName: fileName,
+                mimeType: mimeType,
+                thumbnail: thumbnail
+            )
+
+            pendingImages.append(pending)
+        }
+    }
+
+    /// Remove a pending image
+    func removePendingImage(_ image: PendingImage) {
+        pendingImages.removeAll { $0.id == image.id }
+    }
+
+    /// Clear all pending images
+    func clearPendingImages() {
+        pendingImages.removeAll()
+    }
+
+    private func getMimeType(for url: URL) -> String {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "heic": return "image/heic"
+        default: return "image/jpeg"
+        }
+    }
 
     func ensureDefaultProvider(in context: ModelContext) throws -> LLMProvider {
         let descriptor = FetchDescriptor<LLMProvider>(sortBy: [SortDescriptor(\LLMProvider.updatedAt, order: .reverse)])
@@ -114,30 +219,55 @@ final class ChatViewModel: ObservableObject {
 
     func send(in context: ModelContext) async {
         let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        // Allow sending if there's text OR images
+        guard !trimmed.isEmpty || !pendingImages.isEmpty else { return }
 
         isSending = true
         lastErrorMessage = nil
-        
-        // Capture mentioned apps before clearing
+
+        // Capture state before clearing
         let appsToCapture = mentionedApps
-        
+        let imagesToSend = pendingImages
+
         composerText = ""
         mentionedApps = []
+        pendingImages = []
 
         do {
             let provider = try ensureDefaultProvider(in: context)
             let thread = try ensureThread(in: context)
 
+            // Create user message with attachments
             let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread)
             context.insert(userMessage)
+
+            // Save images to disk and create attachments
+            for pendingImage in imagesToSend {
+                let result = try ImageStorageService.shared.saveImage(
+                    data: pendingImage.data,
+                    originalFileName: pendingImage.fileName
+                )
+
+                let attachment = ImageAttachment(
+                    fileName: result.fileName,
+                    filePath: result.filePath,
+                    mimeType: result.mimeType,
+                    fileSize: result.fileSize,
+                    width: result.dimensions?.width,
+                    height: result.dimensions?.height,
+                    message: userMessage
+                )
+                context.insert(attachment)
+            }
+
             try context.save()
 
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: appsToCapture, in: context)
-            
+
             // Auto-generate thread title from first user message if still "New Chat"
             if thread.title == "New Chat" {
-                thread.title = generateThreadTitle(from: trimmed)
+                let titleText = !trimmed.isEmpty ? trimmed : "Image conversation"
+                thread.title = generateThreadTitle(from: titleText)
                 try context.save()
             }
         } catch {
@@ -213,11 +343,45 @@ final class ChatViewModel: ObservableObject {
     
     private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], in context: ModelContext) async throws {
         let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
-        var requestMessages = history.map { OpenAIChatMessage(role: $0.roleRawValue, content: $0.content) }
 
-        // Add context from @ mentioned apps
+        // Build message history with image support
+        var requestMessages: [OpenAIChatMessage] = []
+
+        for msg in history {
+            if msg.attachments.isEmpty {
+                // Text-only message (backward compatible)
+                requestMessages.append(OpenAIChatMessage(role: msg.roleRawValue, content: msg.content))
+            } else {
+                // Multimodal message with images
+                var contentParts: [OpenAIChatMessageContent] = []
+
+                // Add text part if not empty
+                if !msg.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    contentParts.append(.text(msg.content))
+                }
+
+                // Add image parts
+                for attachment in msg.attachments {
+                    do {
+                        let imageData = try ImageStorageService.shared.loadImage(filePath: attachment.filePath)
+                        let dataURL = OpenAICompatibleClient.encodeImageToDataURL(
+                            data: imageData,
+                            mimeType: attachment.mimeType
+                        )
+                        contentParts.append(.imageUrl(url: dataURL, detail: "auto"))
+                    } catch {
+                        print("Failed to load attachment \(attachment.fileName): \(error)")
+                    }
+                }
+
+                requestMessages.append(OpenAIChatMessage(role: msg.roleRawValue, contentParts: contentParts))
+            }
+        }
+
+        // Add context from @ mentioned apps (using activation to capture content reliably)
         for app in mentionedApps {
-            if let snapshot = accessibilityService.captureContext(for: app.bundleIdentifier, promptIfNeeded: true) {
+            // Use async method that briefly activates the app to capture content
+            if let snapshot = await accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: true) {
                 let rule = try permissionsStore.ensureRule(
                     for: snapshot.bundleIdentifier,
                     displayName: snapshot.appName,

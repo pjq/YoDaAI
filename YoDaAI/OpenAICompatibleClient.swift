@@ -1,8 +1,85 @@
 import Foundation
 
+// MARK: - Message Content Types (Vision API Support)
+
+/// Content part for multimodal messages (text or image)
+struct OpenAIChatMessageContent: Codable {
+    let type: String
+    let text: String?
+    let imageUrl: ImageUrlData?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case imageUrl = "image_url"
+    }
+
+    struct ImageUrlData: Codable {
+        let url: String
+        let detail: String?
+    }
+
+    /// Create text content part
+    static func text(_ content: String) -> OpenAIChatMessageContent {
+        OpenAIChatMessageContent(type: "text", text: content, imageUrl: nil)
+    }
+
+    /// Create image URL content part
+    static func imageUrl(url: String, detail: String? = "auto") -> OpenAIChatMessageContent {
+        OpenAIChatMessageContent(
+            type: "image_url",
+            text: nil,
+            imageUrl: ImageUrlData(url: url, detail: detail)
+        )
+    }
+}
+
+/// Message content that can be either a simple string or an array of content parts
+enum OpenAIChatMessageContentValue: Codable {
+    case string(String)
+    case array([OpenAIChatMessageContent])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let string = try? container.decode(String.self) {
+            self = .string(string)
+        } else if let array = try? container.decode([OpenAIChatMessageContent].self) {
+            self = .array(array)
+        } else {
+            throw DecodingError.typeMismatch(
+                OpenAIChatMessageContentValue.self,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Invalid content type")
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let string):
+            try container.encode(string)
+        case .array(let array):
+            try container.encode(array)
+        }
+    }
+}
+
+/// Chat message supporting both text-only and multimodal content
 struct OpenAIChatMessage: Codable {
     let role: String
-    let content: String
+    let content: OpenAIChatMessageContentValue
+
+    /// Create text-only message (backward compatible)
+    init(role: String, content: String) {
+        self.role = role
+        self.content = .string(content)
+    }
+
+    /// Create multimodal message with content parts
+    init(role: String, contentParts: [OpenAIChatMessageContent]) {
+        self.role = role
+        self.content = .array(contentParts)
+    }
 }
 
 struct OpenAIChatCompletionsRequest: Codable {
@@ -81,6 +158,12 @@ final class OpenAICompatibleClient: @unchecked Sendable {
 
     nonisolated init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
+    }
+
+    /// Convert image data to base64 data URL for Vision API
+    static func encodeImageToDataURL(data: Data, mimeType: String) -> String {
+        let base64String = data.base64EncodedString()
+        return "data:\(mimeType);base64,\(base64String)"
     }
 
     /// Non-streaming chat completion (kept for compatibility)
