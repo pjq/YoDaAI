@@ -30,7 +30,7 @@ final class LLMSettings: ObservableObject {
     
     private init() {
         // Load from UserDefaults with defaults
-        self.temperature = UserDefaults.standard.object(forKey: "llm_temperature") as? Double ?? 0.7
+        self.temperature = UserDefaults.standard.object(forKey: "llm_temperature") as? Double ?? 1.0
         self.maxTokens = UserDefaults.standard.object(forKey: "llm_maxTokens") as? Int ?? 4096
         self.maxMessageCount = UserDefaults.standard.object(forKey: "llm_maxMessageCount") as? Int ?? 20
         self.systemPrompt = UserDefaults.standard.string(forKey: "llm_systemPrompt") ?? "You are a helpful assistant."
@@ -38,7 +38,7 @@ final class LLMSettings: ObservableObject {
     }
     
     func reset() {
-        temperature = 0.7
+        temperature = 1.0
         maxTokens = 4096
         maxMessageCount = 20
         systemPrompt = "You are a helpful assistant."
