@@ -1276,30 +1276,64 @@ private struct PermissionsSettingsTab: View {
 
     @Query(sort: [SortDescriptor(\AppPermissionRule.updatedAt, order: .reverse)])
     private var permissionRules: [AppPermissionRule]
+    
+    @State private var isAccessibilityGranted: Bool = AXIsProcessTrusted()
 
     var body: some View {
         Form {
-            Section("Accessibility permissions") {
+            Section("Accessibility Permission") {
                 HStack {
-                    VStack(alignment: .leading) {
-                        Text("Accessibility permissions")
-                        Text("Used to get selected text system-wide and to paste text anywhere")
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Image(systemName: isAccessibilityGranted ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundStyle(isAccessibilityGranted ? Color.green : Color.red)
+                                .font(.title2)
+                            Text(isAccessibilityGranted ? "Granted" : "Not Granted")
+                                .font(.headline)
+                                .foregroundStyle(isAccessibilityGranted ? Color.primary : Color.red)
+                        }
+                        Text("Required to capture content from other apps and insert text")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Check Accessibility") {
-                        // Open System Preferences
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                            NSWorkspace.shared.open(url)
+                    
+                    if !isAccessibilityGranted {
+                        Button("Grant Access") {
+                            requestAccessibilityPermission()
                         }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Open Settings") {
+                            openAccessibilitySettings()
+                        }
+                        .buttonStyle(.bordered)
                     }
+                }
+                .padding(.vertical, 4)
+                
+                if !isAccessibilityGranted {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("How to enable:")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Text("1. Click \"Grant Access\" to open System Settings")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("2. Find YoDaAI in the list and enable the toggle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("3. You may need to restart YoDaAI after granting permission")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
                 }
             }
 
-            Section("App permissions") {
+            Section("Per-App Permissions") {
                 if permissionRules.isEmpty {
-                    Text("No apps recorded yet. Use YoDaAI with other apps to populate this list.")
+                    Text("No apps recorded yet. Use @ mentions or enable auto-context to populate this list.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(permissionRules) { rule in
@@ -1347,6 +1381,30 @@ private struct PermissionsSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            checkAccessibilityPermission()
+        }
+    }
+    
+    private func checkAccessibilityPermission() {
+        isAccessibilityGranted = AXIsProcessTrusted()
+    }
+    
+    private func requestAccessibilityPermission() {
+        // This will show the system prompt to grant permission
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as NSString: true]
+        _ = AXIsProcessTrustedWithOptions(options)
+        
+        // Check again after a delay (user might grant it)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            checkAccessibilityPermission()
+        }
+    }
+    
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
