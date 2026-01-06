@@ -127,14 +127,17 @@ final class AccessibilityService {
     /// Capture context from a specific app by bundle identifier
     func captureContext(for bundleIdentifier: String, promptIfNeeded: Bool) -> AppContextSnapshot? {
         guard ensurePermission(promptIfNeeded: promptIfNeeded) else {
+            print("[AccessibilityService] Permission not granted")
             return nil
         }
         
         guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleIdentifier }) else {
+            print("[AccessibilityService] App not found: \(bundleIdentifier)")
             return nil
         }
         
         let appName = app.localizedName ?? "(Unknown App)"
+        print("[AccessibilityService] Capturing context for: \(appName)")
         
         var windowTitle: String?
         var focusedRole: String?
@@ -144,38 +147,41 @@ final class AccessibilityService {
         
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         
-        // Get all windows and try to extract content from them
+        // Try multiple approaches to get content
+        var contents: [String] = []
+        
+        // 1. Try to get selected text first (most reliable for active content)
+        if let selectedText = copyAXString(appElement, attribute: kAXSelectedTextAttribute as String), !selectedText.isEmpty {
+            print("[AccessibilityService] Found selected text: \(selectedText.prefix(100))...")
+            contents.append(selectedText)
+        }
+        
+        // 2. Get all windows
         var windowsRef: CFTypeRef?
         let windowsError = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
         
         if windowsError == .success, let windows = windowsRef as? [AXUIElement], !windows.isEmpty {
-            // Use the first (usually main/frontmost) window
+            print("[AccessibilityService] Found \(windows.count) windows")
             let mainWindow = windows[0]
             windowTitle = copyAXString(mainWindow, attribute: kAXTitleAttribute)
+            print("[AccessibilityService] Window title: \(windowTitle ?? "nil")")
             
-            // Try to get content from the window
-            if let content = extractWindowContent(from: mainWindow) {
-                focusedValuePreview = truncate(content, limit: 4000)
+            // Try to get document content
+            if let docValue = copyAXString(mainWindow, attribute: kAXDocumentAttribute as String), !docValue.isEmpty {
+                print("[AccessibilityService] Found document: \(docValue.prefix(100))...")
+                contents.append(docValue)
             }
+            
+            // Extract content from window hierarchy
+            extractAllText(from: mainWindow, into: &contents, depth: 0)
+        } else {
+            print("[AccessibilityService] No windows found, error: \(windowsError.rawValue)")
         }
         
-        // Fallback: try focused/main window attributes
-        if focusedValuePreview == nil || focusedValuePreview?.isEmpty == true {
-            if let window = copyAXUIElement(appElement, attribute: kAXMainWindowAttribute)
-                         ?? copyAXUIElement(appElement, attribute: kAXFocusedWindowAttribute) {
-                if windowTitle == nil {
-                    windowTitle = copyAXString(window, attribute: kAXTitleAttribute)
-                }
-                
-                if let content = extractWindowContent(from: window) {
-                    focusedValuePreview = truncate(content, limit: 4000)
-                }
-            }
-        }
-        
-        // Also try focused element if available
+        // 3. Try focused element
         if let focused = copyAXUIElement(appElement, attribute: kAXFocusedUIElementAttribute) {
             focusedRole = copyAXString(focused, attribute: kAXRoleAttribute)
+            print("[AccessibilityService] Focused element role: \(focusedRole ?? "nil")")
             
             if let editable = copyAXBool(focused, attribute: axEditableAttribute) {
                 focusedIsEditable = editable
@@ -186,12 +192,32 @@ final class AccessibilityService {
                 focusedIsSecure = true
             }
             
-            // If we didn't get content from window, try focused element
-            if focusedValuePreview == nil || focusedValuePreview?.isEmpty == true {
-                if let value = copyAXString(focused, attribute: kAXValueAttribute) {
-                    focusedValuePreview = truncate(value, limit: 4000)
+            // Get value from focused element
+            if let value = copyAXString(focused, attribute: kAXValueAttribute), !value.isEmpty {
+                print("[AccessibilityService] Focused element value: \(value.prefix(100))...")
+                if !contents.contains(value) {
+                    contents.append(value)
                 }
             }
+            
+            // Get selected text from focused element
+            if let selectedText = copyAXString(focused, attribute: kAXSelectedTextAttribute as String), !selectedText.isEmpty {
+                if !contents.contains(selectedText) {
+                    contents.append(selectedText)
+                }
+            }
+        }
+        
+        // Combine all content
+        let combinedContent = contents
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
+        
+        if !combinedContent.isEmpty {
+            focusedValuePreview = truncate(combinedContent, limit: 4000)
+            print("[AccessibilityService] Total content captured: \(focusedValuePreview?.count ?? 0) chars")
+        } else {
+            print("[AccessibilityService] No content captured")
         }
         
         return AppContextSnapshot(
@@ -205,50 +231,41 @@ final class AccessibilityService {
         )
     }
     
-    /// Extract text content from a window by traversing its element tree
-    private func extractWindowContent(from window: AXUIElement) -> String? {
-        var contents: [String] = []
+    /// Extract all text from an accessibility element tree
+    private func extractAllText(from element: AXUIElement, into contents: inout [String], depth: Int) {
+        guard depth < 20 else { return }
+        guard contents.joined().count < 8000 else { return }
         
-        // Try to find text content in the window hierarchy
-        collectTextContent(from: window, into: &contents, depth: 0, maxDepth: 15)
-        
-        let combined = contents.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return combined.isEmpty ? nil : combined
-    }
-    
-    /// Recursively collect text content from accessibility elements
-    private func collectTextContent(from element: AXUIElement, into contents: inout [String], depth: Int, maxDepth: Int) {
-        guard depth < maxDepth else { return }
-        guard contents.joined().count < 5000 else { return } // Stop if we have enough content
-        
+        // Get role
         let role = copyAXString(element, attribute: kAXRoleAttribute)
         
-        // Try to get value from various element types
-        if let value = copyAXString(element, attribute: kAXValueAttribute), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Filter out very short values that are likely UI elements
-            if value.count > 2 {
-                contents.append(value)
+        // Try to get text value
+        if let value = copyAXString(element, attribute: kAXValueAttribute) {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.count > 3 && !contents.contains(trimmed) {
+                contents.append(trimmed)
             }
         }
         
-        // For static text, also try the title/description
-        if role == "AXStaticText" || role == "AXText" {
-            if let title = copyAXString(element, attribute: kAXTitleAttribute), !title.isEmpty, title.count > 2 {
-                if !contents.contains(title) {
-                    contents.append(title)
-                }
-            }
-            if let desc = copyAXString(element, attribute: kAXDescriptionAttribute as String), !desc.isEmpty, desc.count > 2 {
-                if !contents.contains(desc) {
-                    contents.append(desc)
+        // For text elements, also check title and description
+        if role == "AXStaticText" || role == "AXTextField" || role == "AXTextArea" {
+            if let title = copyAXString(element, attribute: kAXTitleAttribute) {
+                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.count > 3 && !contents.contains(trimmed) {
+                    contents.append(trimmed)
                 }
             }
         }
         
-        // For web areas, try to get the whole content
+        // For web areas, get the entire value and stop recursion
         if role == "AXWebArea" {
-            // Web content often has text in AXValue
-            return // Don't recurse further into web areas, we got the value above
+            if let value = copyAXString(element, attribute: kAXValueAttribute) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.count > 3 && !contents.contains(trimmed) {
+                    contents.append(trimmed)
+                }
+            }
+            return
         }
         
         // Recurse into children
@@ -256,8 +273,8 @@ final class AccessibilityService {
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return }
         
-        for child in children.prefix(100) { // Limit to prevent performance issues
-            collectTextContent(from: child, into: &contents, depth: depth + 1, maxDepth: maxDepth)
+        for child in children.prefix(150) {
+            extractAllText(from: child, into: &contents, depth: depth + 1)
         }
     }
 
