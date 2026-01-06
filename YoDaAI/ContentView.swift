@@ -772,6 +772,9 @@ private struct MarkdownTextView: View {
     private enum Block {
         case text(String)
         case code(language: String?, code: String)
+        case header(level: Int, text: String)
+        case listItem(text: String, ordered: Bool, index: Int)
+        case blockquote(text: String)
     }
     
     private func parseBlocks() -> [Block] {
@@ -788,7 +791,7 @@ private struct MarkdownTextView: View {
             let beforeRange = remaining.startIndex..<remaining.index(remaining.startIndex, offsetBy: match.range.location)
             let beforeText = String(remaining[beforeRange]).trimmingCharacters(in: .whitespacesAndNewlines)
             if !beforeText.isEmpty {
-                blocks.append(.text(beforeText))
+                blocks.append(contentsOf: parseTextBlock(beforeText))
             }
             
             // Extract language and code
@@ -808,10 +811,97 @@ private struct MarkdownTextView: View {
         // Remaining text after last code block
         let trimmed = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            blocks.append(.text(trimmed))
+            blocks.append(contentsOf: parseTextBlock(trimmed))
         }
         
         return blocks.isEmpty ? [.text(content)] : blocks
+    }
+    
+    /// Parse a text block into headers, lists, blockquotes, and regular text
+    private func parseTextBlock(_ text: String) -> [Block] {
+        var blocks: [Block] = []
+        var currentParagraph: [String] = []
+        var orderedListIndex = 0
+        
+        let lines = text.components(separatedBy: .newlines)
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            // Check for headers (# Header)
+            if let headerMatch = trimmedLine.range(of: "^(#{1,6})\\s+(.+)$", options: .regularExpression) {
+                // Flush current paragraph
+                if !currentParagraph.isEmpty {
+                    blocks.append(.text(currentParagraph.joined(separator: "\n")))
+                    currentParagraph = []
+                }
+                orderedListIndex = 0
+                
+                let headerText = String(trimmedLine[headerMatch])
+                let hashCount = headerText.prefix(while: { $0 == "#" }).count
+                let content = String(headerText.dropFirst(hashCount)).trimmingCharacters(in: .whitespaces)
+                blocks.append(.header(level: hashCount, text: content))
+            }
+            // Check for blockquotes (> text)
+            else if trimmedLine.hasPrefix(">") {
+                // Flush current paragraph
+                if !currentParagraph.isEmpty {
+                    blocks.append(.text(currentParagraph.joined(separator: "\n")))
+                    currentParagraph = []
+                }
+                orderedListIndex = 0
+                
+                let quoteContent = String(trimmedLine.dropFirst()).trimmingCharacters(in: .whitespaces)
+                blocks.append(.blockquote(text: quoteContent))
+            }
+            // Check for unordered list items (- item or * item)
+            else if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") {
+                // Flush current paragraph
+                if !currentParagraph.isEmpty {
+                    blocks.append(.text(currentParagraph.joined(separator: "\n")))
+                    currentParagraph = []
+                }
+                orderedListIndex = 0
+                
+                let itemContent = String(trimmedLine.dropFirst(2))
+                blocks.append(.listItem(text: itemContent, ordered: false, index: 0))
+            }
+            // Check for ordered list items (1. item, 2. item, etc.)
+            else if let _ = trimmedLine.range(of: "^\\d+\\.\\s+", options: .regularExpression) {
+                // Flush current paragraph
+                if !currentParagraph.isEmpty {
+                    blocks.append(.text(currentParagraph.joined(separator: "\n")))
+                    currentParagraph = []
+                }
+                orderedListIndex += 1
+                
+                // Extract content after the number and dot
+                if let dotIndex = trimmedLine.firstIndex(of: ".") {
+                    let itemContent = String(trimmedLine[trimmedLine.index(after: dotIndex)...]).trimmingCharacters(in: .whitespaces)
+                    blocks.append(.listItem(text: itemContent, ordered: true, index: orderedListIndex))
+                }
+            }
+            // Empty line - flush paragraph
+            else if trimmedLine.isEmpty {
+                if !currentParagraph.isEmpty {
+                    blocks.append(.text(currentParagraph.joined(separator: "\n")))
+                    currentParagraph = []
+                }
+                orderedListIndex = 0
+            }
+            // Regular text
+            else {
+                currentParagraph.append(line)
+                orderedListIndex = 0
+            }
+        }
+        
+        // Flush remaining paragraph
+        if !currentParagraph.isEmpty {
+            blocks.append(.text(currentParagraph.joined(separator: "\n")))
+        }
+        
+        return blocks
     }
     
     @ViewBuilder
@@ -823,11 +913,76 @@ private struct MarkdownTextView: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .code(let language, let code):
             CodeBlockView(language: language, code: code)
+        case .header(let level, let text):
+            headerView(level: level, text: text)
+        case .listItem(let text, let ordered, let index):
+            listItemView(text: text, ordered: ordered, index: index)
+        case .blockquote(let text):
+            blockquoteView(text: text)
         }
     }
     
+    @ViewBuilder
+    private func headerView(level: Int, text: String) -> some View {
+        let (fontSize, fontWeight) = headerStyle(for: level)
+        
+        Text(attributedString(from: text))
+            .font(.system(size: fontSize * scaleManager.scale, weight: fontWeight))
+            .padding(.top, level <= 2 ? 8 : 4)
+            .padding(.bottom, 2)
+    }
+    
+    private func headerStyle(for level: Int) -> (CGFloat, Font.Weight) {
+        switch level {
+        case 1: return (28, .bold)
+        case 2: return (24, .bold)
+        case 3: return (20, .semibold)
+        case 4: return (18, .semibold)
+        case 5: return (16, .medium)
+        default: return (14, .medium)
+        }
+    }
+    
+    @ViewBuilder
+    private func listItemView(text: String, ordered: Bool, index: Int) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            if ordered {
+                Text("\(index).")
+                    .font(.system(size: 14 * scaleManager.scale))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, alignment: .trailing)
+            } else {
+                Text("•")
+                    .font(.system(size: 14 * scaleManager.scale))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, alignment: .center)
+            }
+            Text(attributedString(from: text))
+                .font(.system(size: 14 * scaleManager.scale))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 4)
+    }
+    
+    @ViewBuilder
+    private func blockquoteView(text: String) -> some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 3)
+            
+            Text(attributedString(from: text))
+                .font(.system(size: 14 * scaleManager.scale))
+                .italic()
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+    }
+    
     private func attributedString(from text: String) -> AttributedString {
-        // Try to parse as Markdown
+        // Try to parse as Markdown for inline formatting (bold, italic, links, inline code)
         if let attributed = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
             return attributed
         }
