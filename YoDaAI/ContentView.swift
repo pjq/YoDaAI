@@ -777,7 +777,9 @@ private struct MentionChipView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var showPreview = false
     @State private var previewContent: String?
+    @State private var windowTitle: String?
     @State private var isLoading = false
+    @State private var hasLoadedOnce = false
     
     var body: some View {
         HStack(spacing: 4) {
@@ -791,27 +793,63 @@ private struct MentionChipView: View {
             
             // Preview button
             Button {
-                loadPreview()
+                showPreview = true
+                if !hasLoadedOnce {
+                    loadPreview()
+                }
             } label: {
-                Image(systemName: isLoading ? "hourglass" : (previewContent != nil ? "eye.fill" : "eye"))
+                Image(systemName: isLoading ? "hourglass" : (previewContent != nil && !previewContent!.isEmpty ? "eye.fill" : "eye"))
                     .font(.caption2)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(previewContent != nil ? .green : .secondary)
+            .foregroundStyle(previewContent != nil && !previewContent!.isEmpty ? Color.green : Color.secondary)
             .popover(isPresented: $showPreview) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Content Preview")
-                            .font(.headline)
+                        if let icon = app.icon {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .frame(width: 20, height: 20)
+                        }
+                        VStack(alignment: .leading) {
+                            Text(app.appName)
+                                .font(.headline)
+                            if let title = windowTitle, !title.isEmpty {
+                                Text(title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
-                        if let content = previewContent {
-                            Text("\(content.count) chars")
+                        Button {
+                            loadPreview()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh")
+                    }
+                    
+                    Divider()
+                    
+                    if isLoading {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Capturing content...")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    }
-                    Divider()
-                    if let content = previewContent, !content.isEmpty {
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                    } else if let content = previewContent, !content.isEmpty {
+                        HStack {
+                            Text("\(content.count) characters captured")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                            Spacer()
+                        }
                         ScrollView {
                             Text(content)
                                 .font(.system(.caption, design: .monospaced))
@@ -820,13 +858,25 @@ private struct MentionChipView: View {
                         }
                         .frame(maxHeight: 300)
                     } else {
-                        Text("No content captured from this app.\nTry opening a document or chat in the app.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        VStack(spacing: 8) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                            Text("No content captured")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                            Text("Make sure the app has visible text content.\nTry opening a document, chat, or web page.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
                     }
                 }
                 .padding()
-                .frame(width: 400)
+                .frame(width: 450)
+                .frame(minHeight: 150)
             }
             
             // Remove button
@@ -850,18 +900,12 @@ private struct MentionChipView: View {
     
     private func loadPreview() {
         isLoading = true
-        // Capture context in background
-        Task {
+        hasLoadedOnce = true
+        Task { @MainActor in
             let snapshot = viewModel.accessibilityService.captureContext(for: app.bundleIdentifier, promptIfNeeded: false)
-            await MainActor.run {
-                previewContent = snapshot?.focusedValuePreview
-                isLoading = false
-                if showPreview == false && previewContent == nil {
-                    // Don't auto-show if no content
-                } else if !showPreview {
-                    showPreview = true
-                }
-            }
+            previewContent = snapshot?.focusedValuePreview
+            windowTitle = snapshot?.windowTitle
+            isLoading = false
         }
     }
 }
