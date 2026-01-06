@@ -1703,6 +1703,42 @@ private struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
             
+            Section("Appearance") {
+                HStack {
+                    Text("Zoom Level")
+                    Spacer()
+                    
+                    Button {
+                        AppScaleManager.shared.zoomOut()
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(AppScaleManager.shared.scale <= AppScaleManager.minScale)
+                    
+                    Text("\(AppScaleManager.shared.scalePercentage)%")
+                        .frame(width: 50)
+                        .monospacedDigit()
+                    
+                    Button {
+                        AppScaleManager.shared.zoomIn()
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(AppScaleManager.shared.scale >= AppScaleManager.maxScale)
+                    
+                    Button("Reset") {
+                        AppScaleManager.shared.resetZoom()
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                }
+                Text("Use Cmd++ to zoom in, Cmd+- to zoom out, Cmd+0 to reset")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
             Section("About") {
                 HStack {
                     Text("YoDaAI")
