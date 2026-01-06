@@ -1391,17 +1391,24 @@ private struct PermissionsSettingsTab: View {
     }
     
     private func requestAccessibilityPermission() {
-        // This will show the system prompt to grant permission
+        // First try to trigger the system prompt (works only on first request)
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as NSString: true]
-        _ = AXIsProcessTrustedWithOptions(options)
+        let result = AXIsProcessTrustedWithOptions(options)
+        
+        // If still not trusted, the prompt may not have shown (already denied before)
+        // In that case, open System Settings directly
+        if !result {
+            openAccessibilitySettings()
+        }
         
         // Check again after a delay (user might grant it)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             checkAccessibilityPermission()
         }
     }
     
     private func openAccessibilitySettings() {
+        // Try the modern macOS 13+ URL first
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
