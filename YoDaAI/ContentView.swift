@@ -421,6 +421,7 @@ private struct MessageRowView: View {
     let onDelete: () -> Void
     @State private var isHovering = false
     @State private var showDeleteConfirmation = false
+    @ObservedObject private var scaleManager = AppScaleManager.shared
 
     var body: some View {
         HStack(alignment: .top) {
@@ -438,6 +439,7 @@ private struct MessageRowView: View {
                     // User message: right-aligned bubble
                     if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text(message.content)
+                            .font(.system(size: 14 * scaleManager.scale))
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(Color(nsColor: .controlBackgroundColor))
@@ -752,6 +754,7 @@ private struct ImagePreviewView: View {
 // MARK: - Markdown Text View
 private struct MarkdownTextView: View {
     let content: String
+    @ObservedObject private var scaleManager = AppScaleManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -811,6 +814,7 @@ private struct MarkdownTextView: View {
         switch block {
         case .text(let text):
             Text(attributedString(from: text))
+                .font(.system(size: 14 * scaleManager.scale))
                 .fixedSize(horizontal: false, vertical: true)
         case .code(let language, let code):
             CodeBlockView(language: language, code: code)
@@ -831,6 +835,7 @@ private struct CodeBlockView: View {
     let language: String?
     let code: String
     @State private var isCopied = false
+    @ObservedObject private var scaleManager = AppScaleManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -838,7 +843,7 @@ private struct CodeBlockView: View {
             HStack {
                 if let language, !language.isEmpty {
                     Text(language)
-                        .font(.caption)
+                        .font(.system(size: 11 * scaleManager.scale))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -854,7 +859,7 @@ private struct CodeBlockView: View {
                         Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                         Text(isCopied ? "Copied" : "Copy")
                     }
-                    .font(.caption)
+                    .font(.system(size: 11 * scaleManager.scale))
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(isCopied ? .green : .secondary)
@@ -866,7 +871,7 @@ private struct CodeBlockView: View {
             // Code content
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(size: 13 * scaleManager.scale, weight: .regular, design: .monospaced))
                     .textSelection(.enabled)
                     .padding(12)
             }
@@ -1705,13 +1710,13 @@ private struct GeneralSettingsTab: View {
             
             Section("Appearance") {
                 HStack {
-                    Text("Zoom Level")
+                    Text("Text Size")
                     Spacer()
                     
                     Button {
                         AppScaleManager.shared.zoomOut()
                     } label: {
-                        Image(systemName: "minus.magnifyingglass")
+                        Image(systemName: "textformat.size.smaller")
                     }
                     .buttonStyle(.bordered)
                     .disabled(AppScaleManager.shared.scale <= AppScaleManager.minScale)
@@ -1723,7 +1728,7 @@ private struct GeneralSettingsTab: View {
                     Button {
                         AppScaleManager.shared.zoomIn()
                     } label: {
-                        Image(systemName: "plus.magnifyingglass")
+                        Image(systemName: "textformat.size.larger")
                     }
                     .buttonStyle(.bordered)
                     .disabled(AppScaleManager.shared.scale >= AppScaleManager.maxScale)
@@ -1734,7 +1739,7 @@ private struct GeneralSettingsTab: View {
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
                 }
-                Text("Use Cmd++ to zoom in, Cmd+- to zoom out, Cmd+0 to reset")
+                Text("Use Cmd++ to increase, Cmd+- to decrease, Cmd+0 to reset")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
