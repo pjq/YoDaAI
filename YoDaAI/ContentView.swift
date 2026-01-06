@@ -155,6 +155,7 @@ struct ContentView: View {
 // MARK: - Thread Row
 private struct ThreadRowView: View {
     let thread: ChatThread
+    @ObservedObject private var scaleManager = AppScaleManager.shared
 
     var body: some View {
         HStack(spacing: 10) {
@@ -164,11 +165,12 @@ private struct ThreadRowView: View {
                     .fill(Color.accentColor.opacity(0.15))
                     .frame(width: 28, height: 28)
                 Text("C")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13 * scaleManager.scale, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }
 
             Text(thread.title)
+                .font(.system(size: 14 * scaleManager.scale))
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -241,6 +243,7 @@ private struct ChatHeaderView: View {
     var onDelete: () -> Void
     
     @State private var showDeleteConfirmation = false
+    @ObservedObject private var scaleManager = AppScaleManager.shared
 
     var body: some View {
         HStack {
@@ -250,12 +253,12 @@ private struct ChatHeaderView: View {
                         .fill(Color.accentColor.opacity(0.15))
                         .frame(width: 28, height: 28)
                     Text("C")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13 * scaleManager.scale, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
                 }
 
                 Text(thread.title)
-                    .font(.headline)
+                    .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
             }
 
             Spacer()
@@ -340,17 +343,19 @@ private struct ChatHeaderView: View {
 
 // MARK: - Empty State
 private struct EmptyStateView: View {
+    @ObservedObject private var scaleManager = AppScaleManager.shared
+    
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.bubble.right")
-            .font(.system(size: 48))
+            .font(.system(size: 48 * scaleManager.scale))
             .foregroundStyle(.tertiary)
 
             Text("Start a Conversation")
-                .font(.title2)
-                .fontWeight(.medium)
+                .font(.system(size: 22 * scaleManager.scale, weight: .medium))
 
             Text("Create a new chat to get started")
+                .font(.system(size: 14 * scaleManager.scale))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -889,10 +894,12 @@ private struct CodeBlockView: View {
 private struct TypingIndicatorView: View {
     @State private var dotCount = 0
     let timer = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
+    @ObservedObject private var scaleManager = AppScaleManager.shared
 
     var body: some View {
         HStack {
             Text("Thinking" + String(repeating: ".", count: dotCount))
+                .font(.system(size: 14 * scaleManager.scale))
                 .foregroundStyle(.secondary)
                 .onReceive(timer) { _ in
                     dotCount = (dotCount + 1) % 4
@@ -911,6 +918,7 @@ private struct ComposerView: View {
     @FocusState private var isFocused: Bool
     @State private var showModelPicker = false
     @State private var showFilePicker = false
+    @ObservedObject private var scaleManager = AppScaleManager.shared
 
     private var defaultProvider: LLMProvider? {
         providers.first(where: { $0.isDefault }) ?? providers.first
@@ -936,7 +944,7 @@ private struct ComposerView: View {
                 TextField("Ask anything, @ to mention apps", text: $viewModel.composerText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
-                    .font(.body)
+                    .font(.system(size: 14 * scaleManager.scale))
                     .focused($isFocused)
                     .onChange(of: viewModel.composerText) { _, newValue in
                         // Check if user typed @
@@ -1007,10 +1015,10 @@ private struct ComposerView: View {
                             Text(defaultProvider?.selectedModel ?? "No model")
                                 .foregroundStyle(.primary)
                             Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
+                                .font(.system(size: 10 * scaleManager.scale))
                                 .foregroundStyle(.secondary)
                         }
-                        .font(.callout)
+                        .font(.system(size: 13 * scaleManager.scale))
                     }
                     .buttonStyle(.borderless)
                     .popover(isPresented: $showModelPicker, arrowEdge: .top) {
@@ -1176,6 +1184,7 @@ private struct MentionChipView: View {
     @State private var windowTitle: String?
     @State private var isLoading = false
     @State private var hasLoadedOnce = false
+    @ObservedObject private var scaleManager = AppScaleManager.shared
     
     var body: some View {
         HStack(spacing: 4) {
@@ -1185,7 +1194,7 @@ private struct MentionChipView: View {
                     .frame(width: 16, height: 16)
             }
             Text("@\(app.appName)")
-                .font(.caption)
+                .font(.system(size: 11 * scaleManager.scale))
             
             // Preview button
             Button {
@@ -1195,7 +1204,7 @@ private struct MentionChipView: View {
                 }
             } label: {
                 Image(systemName: isLoading ? "hourglass" : (previewContent != nil && !previewContent!.isEmpty ? "eye.fill" : "eye"))
-                    .font(.caption2)
+                    .font(.system(size: 10 * scaleManager.scale))
             }
             .buttonStyle(.borderless)
             .foregroundStyle(previewContent != nil && !previewContent!.isEmpty ? Color.green : Color.secondary)
@@ -1209,10 +1218,10 @@ private struct MentionChipView: View {
                         }
                         VStack(alignment: .leading) {
                             Text(app.appName)
-                                .font(.headline)
+                                .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
                             if let title = windowTitle, !title.isEmpty {
                                 Text(title)
-                                    .font(.caption)
+                                    .font(.system(size: 11 * scaleManager.scale))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -1221,7 +1230,7 @@ private struct MentionChipView: View {
                             loadPreview()
                         } label: {
                             Image(systemName: "arrow.clockwise")
-                                .font(.caption)
+                                .font(.system(size: 11 * scaleManager.scale))
                         }
                         .buttonStyle(.borderless)
                         .help("Refresh")
@@ -1234,7 +1243,7 @@ private struct MentionChipView: View {
                             ProgressView()
                                 .scaleEffect(0.7)
                             Text("Capturing content...")
-                                .font(.caption)
+                                .font(.system(size: 11 * scaleManager.scale))
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -1242,13 +1251,13 @@ private struct MentionChipView: View {
                     } else if let content = previewContent, !content.isEmpty {
                         HStack {
                             Text("\(content.count) characters captured")
-                                .font(.caption)
+                                .font(.system(size: 11 * scaleManager.scale))
                                 .foregroundStyle(.green)
                             Spacer()
                         }
                         ScrollView {
                             Text(content)
-                                .font(.system(.caption, design: .monospaced))
+                                .font(.system(size: 11 * scaleManager.scale, weight: .regular, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -1256,13 +1265,13 @@ private struct MentionChipView: View {
                     } else {
                         VStack(spacing: 8) {
                             Image(systemName: "doc.text.magnifyingglass")
-                                .font(.largeTitle)
+                                .font(.system(size: 32 * scaleManager.scale))
                                 .foregroundStyle(.secondary)
                             Text("No content captured")
-                                .font(.headline)
+                                .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
                                 .foregroundStyle(.secondary)
                             Text("Click refresh to capture content.\nThe app will briefly activate to read its content.")
-                                .font(.caption)
+                                .font(.system(size: 11 * scaleManager.scale))
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
                         }
@@ -1280,7 +1289,7 @@ private struct MentionChipView: View {
                 viewModel.removeMention(app)
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.caption2)
+                    .font(.system(size: 10 * scaleManager.scale))
             }
             .buttonStyle(.borderless)
         }
@@ -1385,6 +1394,7 @@ private struct MentionPickerPopover: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
+    @ObservedObject private var scaleManager = AppScaleManager.shared
     
     private var filteredApps: [RunningApp] {
         let apps = viewModel.getRunningApps()
@@ -1397,10 +1407,10 @@ private struct MentionPickerPopover: View {
             // Header
             HStack {
                 Text("Mention App")
-                    .font(.headline)
+                    .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
                 Spacer()
                 Text("Include app content in your message")
-                    .font(.caption)
+                    .font(.system(size: 11 * scaleManager.scale))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
@@ -1410,6 +1420,7 @@ private struct MentionPickerPopover: View {
             // Search field
             TextField("Search apps...", text: $searchText)
                 .textFieldStyle(.roundedBorder)
+                .font(.system(size: 14 * scaleManager.scale))
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
             
@@ -1420,7 +1431,7 @@ private struct MentionPickerPopover: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if filteredApps.isEmpty {
                         Text("No running apps found")
-                            .font(.caption)
+                            .font(.system(size: 11 * scaleManager.scale))
                             .foregroundStyle(.secondary)
                             .padding()
                     } else {
@@ -1440,9 +1451,9 @@ private struct MentionPickerPopover: View {
                                     
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(app.appName)
-                                            .font(.body)
+                                            .font(.system(size: 14 * scaleManager.scale))
                                         Text(app.bundleIdentifier)
-                                            .font(.caption2)
+                                            .font(.system(size: 10 * scaleManager.scale))
                                             .foregroundStyle(.secondary)
                                     }
                                     
@@ -1484,6 +1495,7 @@ private struct ModelPickerPopover: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     let providers: [LLMProvider]
+    @ObservedObject private var scaleManager = AppScaleManager.shared
     
     private var filteredProviders: [LLMProvider] {
         providers.filter { !$0.selectedModel.isEmpty }
@@ -1492,7 +1504,7 @@ private struct ModelPickerPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Select Model")
-                .font(.headline)
+                .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
@@ -1509,9 +1521,9 @@ private struct ModelPickerPopover: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(provider.selectedModel)
-                                        .font(.body)
+                                        .font(.system(size: 14 * scaleManager.scale))
                                     Text(provider.name)
-                                        .font(.caption)
+                                        .font(.system(size: 11 * scaleManager.scale))
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
