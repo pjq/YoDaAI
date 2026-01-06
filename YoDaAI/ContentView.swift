@@ -1578,10 +1578,76 @@ private struct GeneralSettingsTab: View {
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var floatingPanelController = FloatingPanelController.shared
     @ObservedObject var cacheService = ContentCacheService.shared
+    @ObservedObject var llmSettings = LLMSettings.shared
     @State private var showCachedAppsSheet = false
 
     var body: some View {
         Form {
+            Section("LLM Settings") {
+                // Temperature slider
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Temperature")
+                        Spacer()
+                        Text(String(format: "%.2f", llmSettings.temperature))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $llmSettings.temperature, in: 0...2, step: 0.1)
+                }
+                Text("Higher values make output more random, lower values more deterministic")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                // Max tokens
+                HStack {
+                    Text("Max Tokens")
+                    Spacer()
+                    TextField("", value: $llmSettings.maxTokens, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                        .multilineTextAlignment(.trailing)
+                }
+                Text("Maximum number of tokens in the response (0 = no limit)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                // Max message count
+                HStack {
+                    Text("Max Message History")
+                    Spacer()
+                    TextField("", value: $llmSettings.maxMessageCount, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                        .multilineTextAlignment(.trailing)
+                }
+                Text("Maximum messages to include in context (0 = all)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                // System prompt toggle and text
+                Toggle("Use System Prompt", isOn: $llmSettings.useSystemPrompt)
+                
+                if llmSettings.useSystemPrompt {
+                    TextEditor(text: $llmSettings.systemPrompt)
+                        .font(.body)
+                        .frame(minHeight: 80, maxHeight: 150)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
+                    Text("Instructions sent to the model at the start of each conversation")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Reset button
+                Button("Reset to Defaults") {
+                    llmSettings.reset()
+                }
+                .foregroundStyle(.red)
+            }
+            
             Section("Floating Panel") {
                 Toggle("Show floating capture panel", isOn: Binding(
                     get: { floatingPanelController.isVisible },

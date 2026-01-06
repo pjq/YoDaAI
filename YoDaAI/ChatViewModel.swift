@@ -3,6 +3,49 @@ import Combine
 import SwiftData
 import AppKit
 
+// MARK: - LLM Settings
+/// Settings for LLM API calls, persisted via UserDefaults
+final class LLMSettings: ObservableObject {
+    static let shared = LLMSettings()
+    
+    @Published var temperature: Double {
+        didSet { UserDefaults.standard.set(temperature, forKey: "llm_temperature") }
+    }
+    
+    @Published var maxTokens: Int {
+        didSet { UserDefaults.standard.set(maxTokens, forKey: "llm_maxTokens") }
+    }
+    
+    @Published var maxMessageCount: Int {
+        didSet { UserDefaults.standard.set(maxMessageCount, forKey: "llm_maxMessageCount") }
+    }
+    
+    @Published var systemPrompt: String {
+        didSet { UserDefaults.standard.set(systemPrompt, forKey: "llm_systemPrompt") }
+    }
+    
+    @Published var useSystemPrompt: Bool {
+        didSet { UserDefaults.standard.set(useSystemPrompt, forKey: "llm_useSystemPrompt") }
+    }
+    
+    private init() {
+        // Load from UserDefaults with defaults
+        self.temperature = UserDefaults.standard.object(forKey: "llm_temperature") as? Double ?? 0.7
+        self.maxTokens = UserDefaults.standard.object(forKey: "llm_maxTokens") as? Int ?? 4096
+        self.maxMessageCount = UserDefaults.standard.object(forKey: "llm_maxMessageCount") as? Int ?? 20
+        self.systemPrompt = UserDefaults.standard.string(forKey: "llm_systemPrompt") ?? "You are a helpful assistant."
+        self.useSystemPrompt = UserDefaults.standard.object(forKey: "llm_useSystemPrompt") as? Bool ?? true
+    }
+    
+    func reset() {
+        temperature = 0.7
+        maxTokens = 4096
+        maxMessageCount = 20
+        systemPrompt = "You are a helpful assistant."
+        useSystemPrompt = true
+    }
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var composerText: String = ""
@@ -361,12 +404,26 @@ final class ChatViewModel: ObservableObject {
     }
     
     private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], cachedContexts: [String: AppContextSnapshot] = [:], in context: ModelContext) async throws {
+        let settings = LLMSettings.shared
         let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
 
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
+        
+        // Add system prompt if enabled
+        if settings.useSystemPrompt && !settings.systemPrompt.isEmpty {
+            requestMessages.append(OpenAIChatMessage(role: "system", content: settings.systemPrompt))
+        }
 
-        for msg in history {
+        // Limit message history based on maxMessageCount setting
+        let limitedHistory: [ChatMessage]
+        if settings.maxMessageCount > 0 && history.count > settings.maxMessageCount {
+            limitedHistory = Array(history.suffix(settings.maxMessageCount))
+        } else {
+            limitedHistory = history
+        }
+
+        for msg in limitedHistory {
             if msg.attachments.isEmpty {
                 // Text-only message (backward compatible)
                 requestMessages.append(OpenAIChatMessage(role: msg.roleRawValue, content: msg.content))
@@ -473,7 +530,9 @@ final class ChatViewModel: ObservableObject {
             baseURL: provider.baseURL,
             apiKey: provider.apiKey,
             model: provider.selectedModel,
-            messages: requestMessages
+            messages: requestMessages,
+            temperature: settings.temperature,
+            maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
         )
         
         for try await chunk in stream {

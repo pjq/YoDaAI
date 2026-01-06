@@ -86,6 +86,24 @@ struct OpenAIChatCompletionsRequest: Codable {
     let model: String
     let messages: [OpenAIChatMessage]
     let stream: Bool?
+    let temperature: Double?
+    let maxTokens: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case stream
+        case temperature
+        case maxTokens = "max_tokens"
+    }
+    
+    init(model: String, messages: [OpenAIChatMessage], stream: Bool? = nil, temperature: Double? = nil, maxTokens: Int? = nil) {
+        self.model = model
+        self.messages = messages
+        self.stream = stream
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+    }
 }
 
 struct OpenAIChatCompletionsResponse: Codable {
@@ -171,14 +189,16 @@ final class OpenAICompatibleClient: @unchecked Sendable {
         baseURL: String,
         apiKey: String,
         model: String,
-        messages: [OpenAIChatMessage]
+        messages: [OpenAIChatMessage],
+        temperature: Double? = nil,
+        maxTokens: Int? = nil
     ) async throws -> String {
         let data = try await sendJSONRequest(
             baseURL: baseURL,
             apiKey: apiKey,
             path: "chat/completions",
             method: "POST",
-            body: OpenAIChatCompletionsRequest(model: model, messages: messages, stream: false)
+            body: OpenAIChatCompletionsRequest(model: model, messages: messages, stream: false, temperature: temperature, maxTokens: maxTokens)
         )
 
         do {
@@ -197,7 +217,9 @@ final class OpenAICompatibleClient: @unchecked Sendable {
         baseURL: String,
         apiKey: String,
         model: String,
-        messages: [OpenAIChatMessage]
+        messages: [OpenAIChatMessage],
+        temperature: Double? = nil,
+        maxTokens: Int? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -217,7 +239,7 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     }
                     
-                    let body = OpenAIChatCompletionsRequest(model: model, messages: messages, stream: true)
+                    let body = OpenAIChatCompletionsRequest(model: model, messages: messages, stream: true, temperature: temperature, maxTokens: maxTokens)
                     request.httpBody = try JSONEncoder().encode(body)
                     
                     let (bytes, response) = try await self.urlSession.bytes(for: request)
