@@ -258,10 +258,11 @@ final class ContentCacheService: ObservableObject {
         var script: String?
         var windowTitle: String?
         
+        // Use bundle identifier to target apps more reliably (tell application id "...")
         switch bundleIdentifier {
         case "com.apple.Safari":
             script = """
-            tell application "Safari"
+            tell application id "com.apple.Safari"
                 if (count of windows) is 0 then
                     return ""
                 end if
@@ -276,9 +277,26 @@ final class ContentCacheService: ObservableObject {
             end tell
             """
             
-        case "com.google.Chrome", "com.google.Chrome.canary":
+        case "com.google.Chrome":
             script = """
-            tell application "Google Chrome"
+            tell application id "com.google.Chrome"
+                if (count of windows) is 0 then
+                    return ""
+                end if
+                set tabTitle to title of active tab of front window
+                set tabURL to URL of active tab of front window
+                try
+                    set pageText to execute active tab of front window javascript "document.body.innerText"
+                on error
+                    set pageText to ""
+                end try
+                return tabTitle & linefeed & tabURL & linefeed & linefeed & pageText
+            end tell
+            """
+            
+        case "com.google.Chrome.canary":
+            script = """
+            tell application id "com.google.Chrome.canary"
                 if (count of windows) is 0 then
                     return ""
                 end if
@@ -295,7 +313,7 @@ final class ContentCacheService: ObservableObject {
             
         case "com.apple.Notes":
             script = """
-            tell application "Notes"
+            tell application id "com.apple.Notes"
                 set noteContent to ""
                 try
                     set theNote to selection
@@ -311,7 +329,7 @@ final class ContentCacheService: ObservableObject {
             
         case "com.apple.mail":
             script = """
-            tell application "Mail"
+            tell application id "com.apple.mail"
                 set msgContent to ""
                 try
                     set theMessages to selection
@@ -329,7 +347,7 @@ final class ContentCacheService: ObservableObject {
             
         case "com.apple.TextEdit":
             script = """
-            tell application "TextEdit"
+            tell application id "com.apple.TextEdit"
                 set docContent to ""
                 try
                     set docContent to text of front document
@@ -344,7 +362,7 @@ final class ContentCacheService: ObservableObject {
         
         guard let scriptSource = script else { return nil }
         
-        print("[ContentCacheService] Running AppleScript for \(appName)...")
+        print("[ContentCacheService] Running AppleScript for \(appName) (id: \(bundleIdentifier))...")
         
         var error: NSDictionary?
         guard let appleScript = NSAppleScript(source: scriptSource) else {
@@ -359,11 +377,20 @@ final class ContentCacheService: ObservableObject {
             let errorMessage = error["NSAppleScriptErrorMessage"] as? String ?? "Unknown error"
             print("[ContentCacheService] AppleScript error for \(appName): [\(errorNumber)] \(errorMessage)")
             
-            // Error -1743 means "Not authorized to send Apple events"
-            // This requires Automation permission in System Settings
-            if errorNumber == -1743 {
-                print("[ContentCacheService] ⚠️ YoDaAI needs Automation permission for \(appName)")
+            // Common errors:
+            // -600: Application isn't running (but it might be - try using id instead of name)
+            // -1743: Not authorized to send Apple events (needs Automation permission)
+            // -1728: Can't get object (app may not support the scripting interface)
+            switch errorNumber {
+            case -600:
+                print("[ContentCacheService] ⚠️ Error -600: App may not be responding to AppleScript. Make sure \(appName) is running and responsive.")
+            case -1743:
+                print("[ContentCacheService] ⚠️ Error -1743: YoDaAI needs Automation permission for \(appName)")
                 print("[ContentCacheService] Please grant permission in: System Settings → Privacy & Security → Automation")
+            case -1728:
+                print("[ContentCacheService] ⚠️ Error -1728: \(appName) may not support this AppleScript command")
+            default:
+                break
             }
             return nil
         }

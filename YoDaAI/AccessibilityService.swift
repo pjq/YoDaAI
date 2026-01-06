@@ -414,11 +414,12 @@ final class AccessibilityService {
         var script: String?
         var windowTitle: String?
         
+        // Use bundle identifier to target apps more reliably (tell application id "...")
         switch bundleIdentifier {
         case "com.apple.Safari":
             // Safari: Get current tab URL and page content
             script = """
-            tell application "Safari"
+            tell application id "com.apple.Safari"
                 if (count of windows) is 0 then
                     return ""
                 end if
@@ -433,10 +434,27 @@ final class AccessibilityService {
             end tell
             """
             
-        case "com.google.Chrome", "com.google.Chrome.canary":
+        case "com.google.Chrome":
             // Chrome: Get current tab URL and page content
             script = """
-            tell application "Google Chrome"
+            tell application id "com.google.Chrome"
+                if (count of windows) is 0 then
+                    return ""
+                end if
+                set tabTitle to title of active tab of front window
+                set tabURL to URL of active tab of front window
+                try
+                    set pageText to execute active tab of front window javascript "document.body.innerText"
+                on error
+                    set pageText to ""
+                end try
+                return tabTitle & linefeed & tabURL & linefeed & linefeed & pageText
+            end tell
+            """
+            
+        case "com.google.Chrome.canary":
+            script = """
+            tell application id "com.google.Chrome.canary"
                 if (count of windows) is 0 then
                     return ""
                 end if
@@ -454,7 +472,7 @@ final class AccessibilityService {
         case "com.apple.Notes":
             // Notes: Get content of selected/current note
             script = """
-            tell application "Notes"
+            tell application id "com.apple.Notes"
                 set noteContent to ""
                 try
                     set theNote to selection
@@ -471,7 +489,7 @@ final class AccessibilityService {
         case "com.apple.mail":
             // Mail: Get content of selected message
             script = """
-            tell application "Mail"
+            tell application id "com.apple.mail"
                 set msgContent to ""
                 try
                     set theMessages to selection
@@ -490,7 +508,7 @@ final class AccessibilityService {
         case "com.apple.TextEdit":
             // TextEdit: Get document content
             script = """
-            tell application "TextEdit"
+            tell application id "com.apple.TextEdit"
                 set docContent to ""
                 try
                     set docContent to text of front document
@@ -528,7 +546,25 @@ final class AccessibilityService {
         let result = appleScript.executeAndReturnError(&error)
         
         if let error = error {
-            print("[AccessibilityService] AppleScript error: \(error)")
+            let errorNumber = error["NSAppleScriptErrorNumber"] as? Int ?? 0
+            let errorMessage = error["NSAppleScriptErrorMessage"] as? String ?? "Unknown error"
+            print("[AccessibilityService] AppleScript error [\(errorNumber)]: \(errorMessage)")
+            
+            // Common errors:
+            // -600: Application isn't running
+            // -1743: Not authorized to send Apple events (needs Automation permission)
+            // -1728: Can't get object
+            switch errorNumber {
+            case -600:
+                print("[AccessibilityService] ⚠️ Error -600: App may not be responding to AppleScript")
+            case -1743:
+                print("[AccessibilityService] ⚠️ Error -1743: YoDaAI needs Automation permission for \(appName)")
+                print("[AccessibilityService] Grant in: System Settings → Privacy & Security → Automation")
+            case -1728:
+                print("[AccessibilityService] ⚠️ Error -1728: \(appName) may not support this AppleScript command")
+            default:
+                break
+            }
             return nil
         }
         
