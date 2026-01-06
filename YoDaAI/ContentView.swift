@@ -764,26 +764,102 @@ private struct MentionChipsView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(viewModel.mentionedApps) { app in
-                    HStack(spacing: 4) {
-                        if let icon = app.icon {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .frame(width: 16, height: 16)
+                    MentionChipView(app: app, viewModel: viewModel)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Single Mention Chip
+private struct MentionChipView: View {
+    let app: RunningApp
+    @ObservedObject var viewModel: ChatViewModel
+    @State private var showPreview = false
+    @State private var previewContent: String?
+    @State private var isLoading = false
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            if let icon = app.icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            }
+            Text("@\(app.appName)")
+                .font(.caption)
+            
+            // Preview button
+            Button {
+                loadPreview()
+            } label: {
+                Image(systemName: isLoading ? "hourglass" : (previewContent != nil ? "eye.fill" : "eye"))
+                    .font(.caption2)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(previewContent != nil ? .green : .secondary)
+            .popover(isPresented: $showPreview) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Content Preview")
+                            .font(.headline)
+                        Spacer()
+                        if let content = previewContent {
+                            Text("\(content.count) chars")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Text("@\(app.appName)")
-                            .font(.caption)
-                        Button {
-                            viewModel.removeMention(app)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption2)
-                        }
-                        .buttonStyle(.borderless)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.accentColor.opacity(0.15))
-                    .clipShape(Capsule())
+                    Divider()
+                    if let content = previewContent, !content.isEmpty {
+                        ScrollView {
+                            Text(content)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 300)
+                    } else {
+                        Text("No content captured from this app.\nTry opening a document or chat in the app.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+                .frame(width: 400)
+            }
+            
+            // Remove button
+            Button {
+                viewModel.removeMention(app)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption2)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.accentColor.opacity(0.15))
+        .clipShape(Capsule())
+        .onAppear {
+            // Auto-load preview when chip appears
+            loadPreview()
+        }
+    }
+    
+    private func loadPreview() {
+        isLoading = true
+        // Capture context in background
+        Task {
+            let snapshot = viewModel.accessibilityService.captureContext(for: app.bundleIdentifier, promptIfNeeded: false)
+            await MainActor.run {
+                previewContent = snapshot?.focusedValuePreview
+                isLoading = false
+                if showPreview == false && previewContent == nil {
+                    // Don't auto-show if no content
+                } else if !showPreview {
+                    showPreview = true
                 }
             }
         }
