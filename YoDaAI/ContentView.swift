@@ -2458,6 +2458,7 @@ private struct AutomationAppRow: View {
     }
     
     private func requestPermission() {
+        print("[AutomationAppRow] Requesting permission for \(appName) (\(bundleId))...")
         isRequesting = true
         status = .requesting
         
@@ -2466,6 +2467,7 @@ private struct AutomationAppRow: View {
             let result = triggerAutomationPermission(for: bundleId, appName: appName)
             
             DispatchQueue.main.async {
+                print("[AutomationAppRow] Result for \(appName): \(result)")
                 isRequesting = false
                 status = result
             }
@@ -2473,96 +2475,98 @@ private struct AutomationAppRow: View {
     }
     
     private func triggerAutomationPermission(for bundleId: String, appName: String) -> PermissionStatus {
-        // Simple AppleScript that triggers the permission dialog
-        // We just try to get a basic property from the app
+        print("[AutomationAppRow] Running AppleScript for \(appName)...")
+        
+        // First, try to launch the app using NSWorkspace (this doesn't require permission)
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            print("[AutomationAppRow] Found app at: \(appURL.path)")
+            
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            
+            let semaphore = DispatchSemaphore(value: 0)
+            var launchError: Error?
+            
+            NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, error in
+                launchError = error
+                semaphore.signal()
+            }
+            
+            semaphore.wait()
+            
+            if let error = launchError {
+                print("[AutomationAppRow] Failed to launch \(appName): \(error)")
+            } else {
+                print("[AutomationAppRow] Launched \(appName), waiting for app to start...")
+                Thread.sleep(forTimeInterval: 1.0)  // Wait for app to fully launch
+            }
+        } else {
+            print("[AutomationAppRow] App not found: \(bundleId)")
+            return .notInstalled
+        }
+        
+        // Now run AppleScript to trigger the permission dialog
+        // Using NSAppleScript directly since we're not sandboxed
         let script: String
         
         switch bundleId {
         case "com.apple.Safari":
             script = """
-            tell application id "com.apple.Safari"
-                try
-                    set windowCount to count of windows
-                    return "granted"
-                on error errMsg
-                    return "error: " & errMsg
-                end try
+            tell application "Safari"
+                count of windows
             end tell
             """
         case "com.google.Chrome":
             script = """
-            tell application id "com.google.Chrome"
-                try
-                    set windowCount to count of windows
-                    return "granted"
-                on error errMsg
-                    return "error: " & errMsg
-                end try
+            tell application "Google Chrome"
+                count of windows
             end tell
             """
         case "com.apple.Notes":
             script = """
-            tell application id "com.apple.Notes"
-                try
-                    set noteCount to count of notes
-                    return "granted"
-                on error errMsg
-                    return "error: " & errMsg
-                end try
+            tell application "Notes"
+                count of notes
             end tell
             """
         case "com.apple.mail":
             script = """
-            tell application id "com.apple.mail"
-                try
-                    set inboxCount to count of mailboxes
-                    return "granted"
-                on error errMsg
-                    return "error: " & errMsg
-                end try
+            tell application "Mail"
+                count of mailboxes
             end tell
             """
         case "com.apple.TextEdit":
             script = """
-            tell application id "com.apple.TextEdit"
-                try
-                    set docCount to count of documents
-                    return "granted"
-                on error errMsg
-                    return "error: " & errMsg
-                end try
+            tell application "TextEdit"
+                count of documents
             end tell
             """
         default:
             return .unknown
         }
         
+        print("[AutomationAppRow] Executing AppleScript: \(script.prefix(50))...")
+        
         var error: NSDictionary?
-        let appleScript = NSAppleScript(source: script)
-        let result = appleScript?.executeAndReturnError(&error)
+        guard let appleScript = NSAppleScript(source: script) else {
+            print("[AutomationAppRow] Failed to create AppleScript")
+            return .unknown
+        }
+        
+        let result = appleScript.executeAndReturnError(&error)
         
         if let error = error {
             let errorNumber = error["NSAppleScriptErrorNumber"] as? Int ?? 0
-            print("[AutomationAppRow] AppleScript error for \(appName): [\(errorNumber)] \(error["NSAppleScriptErrorMessage"] ?? "")")
+            let errorMessage = error["NSAppleScriptErrorMessage"] as? String ?? "Unknown"
+            print("[AutomationAppRow] AppleScript error for \(appName): [\(errorNumber)] \(errorMessage)")
             
-            switch errorNumber {
-            case -1743:
-                // Not authorized - user denied or hasn't responded yet
-                return .denied
-            case -600:
-                // App not running - but permission might still be granted
-                // Try to launch and test again
-                return .unknown
-            default:
+            if errorNumber == -1743 {
                 return .denied
             }
+            return .unknown
         }
         
-        if let resultString = result?.stringValue, resultString == "granted" {
-            return .granted
-        }
-        
-        return .unknown
+        print("[AutomationAppRow] AppleScript succeeded for \(appName), result: \(result.stringValue ?? "nil")")
+        return .granted
     }
 }
 
