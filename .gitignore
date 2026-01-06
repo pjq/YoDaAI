@@ -3,5 +3,9 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 
+# Build artifacts
+*.o
+*.d
+
 # macOS
 .DS_Store
