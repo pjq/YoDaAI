@@ -10,3 +10,6 @@ xcuserdata/
 # macOS
 .DS_Store
 .claude
+
+# Reference images (design screenshots)
+docs/refer/*.png
