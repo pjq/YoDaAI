@@ -775,6 +775,7 @@ private struct MarkdownTextView: View {
         case header(level: Int, text: String)
         case listItem(text: String, ordered: Bool, index: Int)
         case blockquote(text: String)
+        case horizontalRule
     }
     
     private func parseBlocks() -> [Block] {
@@ -851,6 +852,16 @@ private struct MarkdownTextView: View {
                 let hashCount = headerText.prefix(while: { $0 == "#" }).count
                 let content = String(headerText.dropFirst(hashCount)).trimmingCharacters(in: .whitespaces)
                 blocks.append(.header(level: hashCount, text: content))
+            }
+            // Check for horizontal rules (---, ***, ___)
+            else if trimmedLine.range(of: "^([-*_])\\1{2,}$", options: .regularExpression) != nil {
+                // Flush current paragraph
+                if !currentParagraph.isEmpty {
+                    blocks.append(.text(currentParagraph.joined(separator: "\n")))
+                    currentParagraph = []
+                }
+                orderedListIndex = 0
+                blocks.append(.horizontalRule)
             }
             // Check for blockquotes (> text)
             else if trimmedLine.hasPrefix(">") {
@@ -929,6 +940,8 @@ private struct MarkdownTextView: View {
             listItemView(text: text, ordered: ordered, index: index)
         case .blockquote(let text):
             blockquoteView(text: text)
+        case .horizontalRule:
+            horizontalRuleView()
         }
     }
     
@@ -989,6 +1002,14 @@ private struct MarkdownTextView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
+    }
+    
+    @ViewBuilder
+    private func horizontalRuleView() -> some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(0.3))
+            .frame(height: 1)
+            .padding(.vertical, 12)
     }
     
     private func attributedString(from text: String) -> AttributedString {
