@@ -22,6 +22,7 @@ enum MCPClientError: Error, LocalizedError {
     case serverNotAvailable
     case sseEndpointNotReceived
     case sseParseError(String)
+    case sseResponseTimeout
     
     var errorDescription: String? {
         switch self {
@@ -50,6 +51,52 @@ enum MCPClientError: Error, LocalizedError {
             return "SSE endpoint URL not received from server"
         case .sseParseError(let detail):
             return "SSE parse error: \(detail)"
+        case .sseResponseTimeout:
+            return "Timeout waiting for SSE response"
+        }
+    }
+}
+
+// MARK: - SSE Response Handler
+
+/// Handles SSE stream and collects responses
+private class SSEResponseCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var responses: [Int: Data] = [:]
+    private var continuations: [Int: CheckedContinuation<Data, Error>] = [:]
+    
+    func addContinuation(for id: Int, continuation: CheckedContinuation<Data, Error>) {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        // Check if response already arrived
+        if let data = responses.removeValue(forKey: id) {
+            continuation.resume(returning: data)
+        } else {
+            continuations[id] = continuation
+        }
+    }
+    
+    func handleResponse(id: Int, data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        if let continuation = continuations.removeValue(forKey: id) {
+            continuation.resume(returning: data)
+        } else {
+            // Store for later retrieval
+            responses[id] = data
+        }
+    }
+    
+    func cancelAll(with error: Error) {
+        lock.lock()
+        let pending = continuations
+        continuations.removeAll()
+        lock.unlock()
+        
+        for (_, continuation) in pending {
+            continuation.resume(throwing: error)
         }
     }
 }
@@ -68,11 +115,14 @@ actor MCPClient {
     /// SSE-specific: the POST endpoint URL received from SSE connection
     private var ssePostEndpoint: URL?
     
-    /// SSE-specific: pending responses keyed by request ID
-    private var pendingResponses: [Int: CheckedContinuation<Data, Error>] = [:]
+    /// SSE-specific: response collector for async responses
+    private var sseResponseCollector: SSEResponseCollector?
     
-    /// SSE-specific: active SSE task
-    private var sseTask: Task<Void, Never>?
+    /// SSE-specific: active SSE listening task
+    private var sseListenTask: Task<Void, Never>?
+    
+    /// SSE-specific: the base URL for the SSE connection
+    private var sseBaseURL: URL?
     
     /// Request timeout in seconds
     private let timeout: TimeInterval = 30
@@ -87,7 +137,7 @@ actor MCPClient {
     }
     
     deinit {
-        sseTask?.cancel()
+        sseListenTask?.cancel()
     }
     
     // MARK: - Request ID Management
@@ -132,18 +182,23 @@ actor MCPClient {
     
     // MARK: - SSE Connection
     
-    /// Connect to SSE endpoint and get the POST endpoint URL
+    /// Connect to SSE endpoint, get the POST endpoint URL, and start listening for responses
     private func connectSSE() async throws {
         guard let url = server.endpointURL else {
             throw MCPClientError.invalidURL
         }
         
+        self.sseBaseURL = url
         print("[MCPClient] Connecting to SSE endpoint: \(url)")
+        
+        // Create response collector
+        let collector = SSEResponseCollector()
+        self.sseResponseCollector = collector
         
         // Use a dedicated session with longer timeout for SSE
         let sseConfig = URLSessionConfiguration.default
-        sseConfig.timeoutIntervalForRequest = 60
-        sseConfig.timeoutIntervalForResource = 120
+        sseConfig.timeoutIntervalForRequest = 300 // 5 minutes for SSE
+        sseConfig.timeoutIntervalForResource = 600
         let sseSession = URLSession(configuration: sseConfig)
         
         var request = URLRequest(url: url)
@@ -156,91 +211,97 @@ actor MCPClient {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
-        // Use withThrowingTaskGroup to add timeout and proper cancellation
-        try await withThrowingTaskGroup(of: URL.self) { group in
-            // Task to read SSE stream
-            group.addTask {
-                let (bytes, response) = try await sseSession.bytes(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw MCPClientError.invalidResponse
-                }
-                
-                print("[MCPClient] SSE connection status: \(httpResponse.statusCode)")
-                
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: "Failed to connect to SSE endpoint")
-                }
-                
-                // Parse SSE stream to find the endpoint event
-                var currentEvent: String?
-                var currentData: String?
-                
-                for try await line in bytes.lines {
-                    // Check for cancellation
-                    try Task.checkCancellation()
-                    
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    print("[MCPClient] SSE line: '\(trimmed)'")
-                    
-                    if trimmed.hasPrefix("event:") {
-                        currentEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                        print("[MCPClient] SSE event type: \(currentEvent ?? "nil")")
-                    } else if trimmed.hasPrefix("data:") {
-                        currentData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                        print("[MCPClient] SSE data: \(currentData ?? "nil")")
-                        
-                        // Process immediately when we have endpoint event and data
-                        // Don't wait for empty line - some servers don't send it
-                        if currentEvent == "endpoint", let data = currentData, !data.isEmpty {
-                            let endpointPath = data.trimmingCharacters(in: .whitespacesAndNewlines)
-                            
-                            // Build full URL - handle relative paths
-                            let endpointURL: URL?
-                            if endpointPath.hasPrefix("http://") || endpointPath.hasPrefix("https://") {
-                                // Absolute URL
-                                endpointURL = URL(string: endpointPath)
-                            } else {
-                                // Relative path - combine with base URL
-                                var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
-                                
-                                // Parse the path and query from endpointPath
-                                if let pathURL = URL(string: endpointPath, relativeTo: url) {
-                                    components?.path = pathURL.path
-                                    components?.query = pathURL.query
-                                }
-                                endpointURL = components?.url
-                            }
-                            
-                            if let finalURL = endpointURL {
-                                print("[MCPClient] SSE endpoint received: \(finalURL)")
-                                return finalURL
-                            }
-                        }
-                    } else if trimmed.isEmpty {
-                        // Empty line - reset state for next event
-                        currentEvent = nil
-                        currentData = nil
-                    }
-                }
-                
+        // Connect and get the endpoint
+        let (bytes, response) = try await sseSession.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MCPClientError.invalidResponse
+        }
+        
+        print("[MCPClient] SSE connection status: \(httpResponse.statusCode)")
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: "Failed to connect to SSE endpoint")
+        }
+        
+        // Create async stream iterator
+        var iterator = bytes.lines.makeAsyncIterator()
+        
+        // First, find the endpoint event
+        var currentEvent: String?
+        var foundEndpoint = false
+        
+        while !foundEndpoint {
+            guard let line = try await iterator.next() else {
                 throw MCPClientError.sseEndpointNotReceived
             }
             
-            // Timeout task
-            group.addTask {
-                try await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds timeout
-                throw MCPClientError.timeout
-            }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            print("[MCPClient] SSE line: '\(trimmed)'")
             
-            // Wait for the first task to complete (either endpoint received or timeout)
-            if let endpointURL = try await group.next() {
-                self.ssePostEndpoint = endpointURL
-                group.cancelAll() // Cancel the other task
-                return
+            if trimmed.hasPrefix("event:") {
+                currentEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                print("[MCPClient] SSE event type: \(currentEvent ?? "nil")")
+            } else if trimmed.hasPrefix("data:") {
+                let data = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                print("[MCPClient] SSE data: \(data)")
+                
+                if currentEvent == "endpoint" && !data.isEmpty {
+                    // Build full URL
+                    let endpointURL: URL?
+                    if data.hasPrefix("http://") || data.hasPrefix("https://") {
+                        endpointURL = URL(string: data)
+                    } else {
+                        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
+                        if let pathURL = URL(string: data, relativeTo: url) {
+                            components?.path = pathURL.path
+                            components?.query = pathURL.query
+                        }
+                        endpointURL = components?.url
+                    }
+                    
+                    if let finalURL = endpointURL {
+                        self.ssePostEndpoint = finalURL
+                        print("[MCPClient] SSE endpoint received: \(finalURL)")
+                        foundEndpoint = true
+                    }
+                }
             }
-            
-            throw MCPClientError.sseEndpointNotReceived
+        }
+        
+        // Start background task to listen for responses
+        sseListenTask = Task { [weak collector] in
+            do {
+                var msgEvent: String?
+                var msgData: String?
+                
+                while let line = try await iterator.next() {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    
+                    if trimmed.isEmpty {
+                        // End of event - process if we have message data
+                        if msgEvent == "message", let dataStr = msgData {
+                            print("[MCPClient] SSE message received: \(dataStr.prefix(200))")
+                            
+                            // Parse JSON-RPC response to get ID
+                            if let data = dataStr.data(using: .utf8),
+                               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                               let id = json["id"] as? Int {
+                                collector?.handleResponse(id: id, data: data)
+                            }
+                        }
+                        msgEvent = nil
+                        msgData = nil
+                    } else if trimmed.hasPrefix("event:") {
+                        msgEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                    } else if trimmed.hasPrefix("data:") {
+                        msgData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                    }
+                }
+            } catch {
+                print("[MCPClient] SSE listen error: \(error)")
+                collector?.cancelAll(with: error)
+            }
         }
     }
     
@@ -310,6 +371,7 @@ actor MCPClient {
     /// Send a JSON-RPC request and wait for response
     private func sendRequest<T: Decodable>(method: String, params: [String: AnyCodable]?) async throws -> T {
         let url = try getRequestURL()
+        let reqId = nextRequestId()
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -317,7 +379,7 @@ actor MCPClient {
         
         // Set headers
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
         
         // Add custom headers from server config
         for (key, value) in server.buildHeaders() {
@@ -326,19 +388,18 @@ actor MCPClient {
         
         // Build JSON-RPC request
         let jsonRPCRequest = JSONRPCRequest(
-            id: nextRequestId(),
+            id: reqId,
             method: method,
             params: params
         )
         
         let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys // For consistent output
         let requestBody = try encoder.encode(jsonRPCRequest)
         request.httpBody = requestBody
         
         // Debug: log request
         if let requestStr = String(data: requestBody, encoding: .utf8) {
-            print("[MCPClient] Sending request to \(url): \(method)")
+            print("[MCPClient] Sending request to \(url): \(method) (id: \(reqId))")
             print("[MCPClient] Request body: \(requestStr)")
         }
         
@@ -351,7 +412,38 @@ actor MCPClient {
             
             print("[MCPClient] Response status: \(httpResponse.statusCode)")
             
-            // Always log response body for debugging
+            // For SSE transport with 202 Accepted, wait for response on SSE stream
+            if server.transport == .sse && httpResponse.statusCode == 202 {
+                print("[MCPClient] Waiting for SSE response for request \(reqId)...")
+                
+                guard let collector = sseResponseCollector else {
+                    throw MCPClientError.sseParseError("SSE collector not initialized")
+                }
+                
+                // Wait for response with timeout
+                let responseData = try await withThrowingTaskGroup(of: Data.self) { group in
+                    group.addTask {
+                        try await withCheckedThrowingContinuation { continuation in
+                            collector.addContinuation(for: reqId, continuation: continuation)
+                        }
+                    }
+                    
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: UInt64(self.timeout * 1_000_000_000))
+                        throw MCPClientError.sseResponseTimeout
+                    }
+                    
+                    guard let result = try await group.next() else {
+                        throw MCPClientError.sseResponseTimeout
+                    }
+                    group.cancelAll()
+                    return result
+                }
+                
+                return try parseJSONRPCResponse(from: responseData)
+            }
+            
+            // Log response body for debugging
             if let responseStr = String(data: data, encoding: .utf8) {
                 print("[MCPClient] Response body: \(responseStr.prefix(1000))")
             }
@@ -362,20 +454,13 @@ actor MCPClient {
                 throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: message)
             }
             
-            // Parse JSON-RPC response
-            let decoder = JSONDecoder()
-            let jsonRPCResponse = try decoder.decode(JSONRPCResponse<T>.self, from: data)
-            
-            // Check for JSON-RPC error
-            if let error = jsonRPCResponse.error {
-                throw MCPClientError.jsonRPCError(error)
-            }
-            
-            guard let result = jsonRPCResponse.result else {
+            // If empty response, error
+            if data.isEmpty {
                 throw MCPClientError.invalidResponse
             }
             
-            return result
+            return try parseJSONRPCResponse(from: data)
+            
         } catch let error as MCPClientError {
             throw error
         } catch let error as DecodingError {
@@ -384,6 +469,23 @@ actor MCPClient {
         } catch {
             throw MCPClientError.connectionFailed(error)
         }
+    }
+    
+    /// Parse JSON-RPC response from data
+    private func parseJSONRPCResponse<T: Decodable>(from data: Data) throws -> T {
+        let decoder = JSONDecoder()
+        let jsonRPCResponse = try decoder.decode(JSONRPCResponse<T>.self, from: data)
+        
+        // Check for JSON-RPC error
+        if let error = jsonRPCResponse.error {
+            throw MCPClientError.jsonRPCError(error)
+        }
+        
+        guard let result = jsonRPCResponse.result else {
+            throw MCPClientError.invalidResponse
+        }
+        
+        return result
     }
     
     /// Send a JSON-RPC notification (no response expected)
