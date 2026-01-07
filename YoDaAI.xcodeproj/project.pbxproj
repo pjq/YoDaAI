@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		346BE6AE2F0EA28C00F8880E /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 34A024FE2F0E0001009F907B /* MCP */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		34A024E12F0D0BCA009F907B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				346BE6AE2F0EA28C00F8880E /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -196,10 +201,10 @@
 			);
 			mainGroup = 34A024C82F0D0BC5009F907B;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			packageReferences = (
 				34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */,
 			);
+			preferredProjectObjectVersion = 77;
 			productRefGroup = 34A024D22F0D0BC5009F907B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";

@@ -58,7 +58,8 @@ enum MCPClientError: Error, LocalizedError {
 actor MCPClientWrapper {
     private let server: MCPServer
     private var client: Client?
-    private var transport: HTTPClientTransport?
+    private var httpTransport: HTTPClientTransport?
+    private var legacySSETransport: LegacySSETransport?
     private var isInitialized: Bool = false
     private var serverCapabilitiesResult: Server.Capabilities?
     private var serverInfoResult: Server.Info?
@@ -75,7 +76,7 @@ actor MCPClientWrapper {
             throw MCPClientError.invalidURL
         }
         
-        print("[MCPClient] Connecting to MCP server: \(url)")
+        print("[MCPClient] Connecting to MCP server: \(url) (transport: \(server.transport.displayName))")
         
         // Create the MCP client
         let mcpClient = Client(
@@ -84,25 +85,47 @@ actor MCPClientWrapper {
             configuration: .default
         )
         
-        // Create transport with request modifier for custom headers
-        let httpTransport = HTTPClientTransport(
-            endpoint: url,
-            streaming: true,
-            requestModifier: { [server] request in
-                var modifiedRequest = request
-                for (key, value) in server.buildHeaders() {
-                    modifiedRequest.addValue(value, forHTTPHeaderField: key)
-                }
-                return modifiedRequest
-            }
-        )
-        
-        self.transport = httpTransport
         self.client = mcpClient
+        
+        // Create appropriate transport based on server configuration
+        let transport: any Transport
+        
+        switch server.transport {
+        case .httpStreamable:
+            // HTTP Streamable transport (default, modern MCP)
+            let httpTransport = HTTPClientTransport(
+                endpoint: url,
+                streaming: true,
+                requestModifier: { [server] request in
+                    var modifiedRequest = request
+                    for (key, value) in server.buildHeaders() {
+                        modifiedRequest.addValue(value, forHTTPHeaderField: key)
+                    }
+                    return modifiedRequest
+                }
+            )
+            self.httpTransport = httpTransport
+            transport = httpTransport
+            
+        case .sse:
+            // Legacy SSE transport (for servers like AMAP)
+            let sseTransport = LegacySSETransport(
+                endpoint: url,
+                requestModifier: { [server] request in
+                    var modifiedRequest = request
+                    for (key, value) in server.buildHeaders() {
+                        modifiedRequest.addValue(value, forHTTPHeaderField: key)
+                    }
+                    return modifiedRequest
+                }
+            )
+            self.legacySSETransport = sseTransport
+            transport = sseTransport
+        }
         
         // Connect to the server
         do {
-            let result = try await mcpClient.connect(transport: httpTransport)
+            let result = try await mcpClient.connect(transport: transport)
             
             self.serverCapabilitiesResult = result.capabilities
             self.serverInfoResult = result.serverInfo
@@ -200,11 +223,15 @@ actor MCPClientWrapper {
     
     /// Disconnect from the server
     func disconnect() async {
-        if let transport = transport {
+        if let transport = httpTransport {
+            await transport.disconnect()
+        }
+        if let transport = legacySSETransport {
             await transport.disconnect()
         }
         client = nil
-        transport = nil
+        httpTransport = nil
+        legacySSETransport = nil
         isInitialized = false
     }
     
