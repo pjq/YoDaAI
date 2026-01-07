@@ -410,9 +410,31 @@ final class ChatViewModel: ObservableObject {
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
         
-        // Add system prompt if enabled
+        // Build combined system prompt
+        var systemPromptParts: [String] = []
+        
+        // Add user system prompt if enabled
         if settings.useSystemPrompt && !settings.systemPrompt.isEmpty {
-            requestMessages.append(OpenAIChatMessage(role: "system", content: settings.systemPrompt))
+            systemPromptParts.append(settings.systemPrompt)
+        }
+        
+        // Add MCP tools to system prompt if enabled
+        let toolRegistry = MCPToolRegistry.shared
+        if toolRegistry.isMCPEnabled {
+            // Fetch MCP servers from context
+            let descriptor = FetchDescriptor<MCPServer>()
+            let mcpServers = (try? context.fetch(descriptor)) ?? []
+            
+            // Get tools system prompt (will use cache if available)
+            let toolsPrompt = await toolRegistry.getToolsSystemPrompt(servers: mcpServers)
+            if !toolsPrompt.isEmpty {
+                systemPromptParts.append(toolsPrompt)
+            }
+        }
+        
+        // Combine all system prompt parts
+        if !systemPromptParts.isEmpty {
+            requestMessages.append(OpenAIChatMessage(role: "system", content: systemPromptParts.joined(separator: "\n\n")))
         }
 
         // Limit message history based on maxMessageCount setting
@@ -540,6 +562,131 @@ final class ChatViewModel: ObservableObject {
         }
         
         try context.save()
+        
+        // Check for tool calls and execute them (MCP tool loop)
+        if toolRegistry.isMCPEnabled {
+            let mcpServers = (try? context.fetch(FetchDescriptor<MCPServer>())) ?? []
+            try await executeToolCallsIfNeeded(
+                assistantMessage: assistantMessage,
+                thread: thread,
+                provider: provider,
+                mcpServers: mcpServers,
+                requestMessages: requestMessages,
+                settings: settings,
+                in: context
+            )
+        }
+    }
+    
+    // MARK: - MCP Tool Execution
+    
+    /// Execute tool calls from assistant response and continue conversation
+    private func executeToolCallsIfNeeded(
+        assistantMessage: ChatMessage,
+        thread: ChatThread,
+        provider: LLMProvider,
+        mcpServers: [MCPServer],
+        requestMessages: [OpenAIChatMessage],
+        settings: LLMSettings,
+        in context: ModelContext,
+        depth: Int = 0
+    ) async throws {
+        // Limit recursion depth to prevent infinite loops
+        let maxToolIterations = 5
+        guard depth < maxToolIterations else {
+            print("[MCP] Max tool iterations reached (\(maxToolIterations))")
+            return
+        }
+        
+        let toolRegistry = MCPToolRegistry.shared
+        let toolCalls = MCPToolRegistry.parseToolCalls(from: assistantMessage.content)
+        
+        guard !toolCalls.isEmpty else {
+            return // No tool calls to process
+        }
+        
+        print("[MCP] Found \(toolCalls.count) tool call(s) in response")
+        
+        // Execute each tool call and collect results
+        var toolResults: [(name: String, result: String)] = []
+        
+        for (name, arguments) in toolCalls {
+            print("[MCP] Executing tool: \(name)")
+            do {
+                let result = try await toolRegistry.callTool(name: name, arguments: arguments, servers: mcpServers)
+                toolResults.append((name: name, result: result))
+                print("[MCP] Tool \(name) returned: \(result.prefix(200))...")
+            } catch {
+                let errorResult = "Error executing tool '\(name)': \(error.localizedDescription)"
+                toolResults.append((name: name, result: errorResult))
+                print("[MCP] Tool \(name) failed: \(error)")
+            }
+        }
+        
+        // Format tool results as a system message
+        let toolResultsContent = formatToolResults(toolResults)
+        
+        // Build updated message history including the tool results
+        var updatedMessages = requestMessages
+        
+        // Add the assistant's response (with tool calls)
+        updatedMessages.append(OpenAIChatMessage(role: "assistant", content: assistantMessage.content))
+        
+        // Add tool results as a system message
+        updatedMessages.append(OpenAIChatMessage(role: "system", content: toolResultsContent))
+        
+        // Create a new assistant message for the follow-up response
+        let followUpMessage = ChatMessage(role: .assistant, content: "", thread: thread)
+        context.insert(followUpMessage)
+        try context.save()
+        
+        // Update streaming message ID
+        streamingMessageID = followUpMessage.id
+        
+        // Stream the follow-up response
+        let stream = client.createChatCompletionStream(
+            baseURL: provider.baseURL,
+            apiKey: provider.apiKey,
+            model: provider.selectedModel,
+            messages: updatedMessages,
+            temperature: settings.temperature,
+            maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
+        )
+        
+        for try await chunk in stream {
+            followUpMessage.content += chunk
+        }
+        
+        try context.save()
+        
+        // Recursively check for more tool calls
+        try await executeToolCallsIfNeeded(
+            assistantMessage: followUpMessage,
+            thread: thread,
+            provider: provider,
+            mcpServers: mcpServers,
+            requestMessages: updatedMessages,
+            settings: settings,
+            in: context,
+            depth: depth + 1
+        )
+    }
+    
+    /// Format tool results for injection into conversation
+    private func formatToolResults(_ results: [(name: String, result: String)]) -> String {
+        var lines: [String] = ["Tool execution results:"]
+        
+        for (name, result) in results {
+            lines.append("")
+            lines.append("<tool_result name=\"\(name)\">")
+            lines.append(result)
+            lines.append("</tool_result>")
+        }
+        
+        lines.append("")
+        lines.append("Please continue your response based on the tool results above. If you need to call more tools, use the <tool_call> format. Otherwise, provide your final answer to the user.")
+        
+        return lines.joined(separator: "\n")
     }
 
     func insertLastAssistantMessageIntoFocusedApp(in context: ModelContext) {

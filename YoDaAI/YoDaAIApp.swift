@@ -98,6 +98,7 @@ struct YoDaAIApp: App {
             LLMProvider.self,
             AppPermissionRule.self,
             ImageAttachment.self,
+            MCPServer.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

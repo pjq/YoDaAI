@@ -146,6 +146,8 @@ struct ContentView: View {
                             return .general
                         case .apiKeys:
                             return .apiKeys
+                        case .mcpServers:
+                            return .mcpServers
                         case .permissions:
                             return .permissions
                         }
@@ -156,6 +158,8 @@ struct ContentView: View {
                             settingsRouter.selectedTab = .general
                         case .apiKeys:
                             settingsRouter.selectedTab = .apiKeys
+                        case .mcpServers:
+                            settingsRouter.selectedTab = .mcpServers
                         case .permissions:
                             settingsRouter.selectedTab = .permissions
                         }
@@ -528,10 +532,9 @@ private struct MessageRowView: View {
                             .textSelection(.enabled)
                     }
                 } else {
-                    // Assistant message: Markdown rendered
+                    // Assistant message: Markdown rendered with tool call support
                     if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        MarkdownTextView(content: message.content)
-                            .textSelection(.enabled)
+                        AssistantMessageContentView(content: message.content)
                     }
                 }
 
@@ -731,6 +734,252 @@ private struct MessageImageGridView: View {
                 print("Failed to load image: \(error)")
             }
         }
+    }
+}
+
+// MARK: - Tool Call View
+
+/// View for displaying MCP tool calls in assistant messages
+private struct ToolCallView: View {
+    let toolName: String
+    let arguments: String?
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    
+    @ObservedObject private var scaleManager = AppScaleManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button(action: onToggle) {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10 * scaleManager.scale, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                    
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.system(size: 11 * scaleManager.scale))
+                        .foregroundStyle(.orange)
+                    
+                    Text("Tool: \(toolName)")
+                        .font(.system(size: 12 * scaleManager.scale, weight: .medium))
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.orange.opacity(0.1))
+                )
+            }
+            .buttonStyle(.plain)
+            
+            if isExpanded, let args = arguments, !args.isEmpty {
+                Text(args)
+                    .font(.system(size: 11 * scaleManager.scale, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                    )
+                    .padding(.leading, 18)
+            }
+        }
+    }
+}
+
+/// View for displaying MCP tool results in assistant messages
+private struct ToolResultView: View {
+    let toolName: String
+    let result: String
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    
+    @ObservedObject private var scaleManager = AppScaleManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button(action: onToggle) {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10 * scaleManager.scale, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                    
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11 * scaleManager.scale))
+                        .foregroundStyle(.green)
+                    
+                    Text("Result: \(toolName)")
+                        .font(.system(size: 12 * scaleManager.scale, weight: .medium))
+                        .foregroundStyle(.primary)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.green.opacity(0.1))
+                )
+            }
+            .buttonStyle(.plain)
+            
+            if isExpanded {
+                Text(result)
+                    .font(.system(size: 11 * scaleManager.scale, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                    )
+                    .padding(.leading, 18)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+/// Helper to parse and render content with tool calls/results
+private struct AssistantMessageContentView: View {
+    let content: String
+    @State private var expandedToolCalls: Set<Int> = []
+    @State private var expandedToolResults: Set<Int> = []
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let segments = parseContentSegments(content)
+            
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                switch segment {
+                case .text(let text):
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        MarkdownTextView(content: text)
+                            .textSelection(.enabled)
+                    }
+                    
+                case .toolCall(let name, let args):
+                    ToolCallView(
+                        toolName: name,
+                        arguments: args,
+                        isExpanded: expandedToolCalls.contains(index),
+                        onToggle: {
+                            if expandedToolCalls.contains(index) {
+                                expandedToolCalls.remove(index)
+                            } else {
+                                expandedToolCalls.insert(index)
+                            }
+                        }
+                    )
+                    
+                case .toolResult(let name, let result):
+                    ToolResultView(
+                        toolName: name,
+                        result: result,
+                        isExpanded: expandedToolResults.contains(index),
+                        onToggle: {
+                            if expandedToolResults.contains(index) {
+                                expandedToolResults.remove(index)
+                            } else {
+                                expandedToolResults.insert(index)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+    
+    private enum ContentSegment {
+        case text(String)
+        case toolCall(name: String, arguments: String?)
+        case toolResult(name: String, result: String)
+    }
+    
+    private func parseContentSegments(_ content: String) -> [ContentSegment] {
+        var segments: [ContentSegment] = []
+        var remaining = content
+        
+        // Pattern for tool calls: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+        let toolCallPattern = #"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>"#
+        // Pattern for tool results: <tool_result name="...">...</tool_result>
+        let toolResultPattern = #"<tool_result name="([^"]+)">([\s\S]*?)</tool_result>"#
+        
+        // Combined pattern to find either
+        let combinedPattern = "(\(toolCallPattern))|(\(toolResultPattern))"
+        
+        guard let regex = try? NSRegularExpression(pattern: combinedPattern, options: []) else {
+            return [.text(content)]
+        }
+        
+        var lastEnd = remaining.startIndex
+        let nsRange = NSRange(remaining.startIndex..., in: remaining)
+        
+        regex.enumerateMatches(in: remaining, options: [], range: nsRange) { match, _, _ in
+            guard let match = match else { return }
+            
+            let matchRange = Range(match.range, in: remaining)!
+            
+            // Add text before this match
+            if lastEnd < matchRange.lowerBound {
+                let textBefore = String(remaining[lastEnd..<matchRange.lowerBound])
+                if !textBefore.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    segments.append(.text(textBefore))
+                }
+            }
+            
+            // Check if it's a tool call (group 2) or tool result (groups 4,5)
+            if let jsonRange = Range(match.range(at: 2), in: remaining) {
+                // Tool call
+                let jsonString = String(remaining[jsonRange])
+                if let data = jsonString.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let name = json["name"] as? String {
+                    let args: String?
+                    if let argsDict = json["arguments"] {
+                        if let argsData = try? JSONSerialization.data(withJSONObject: argsDict, options: .prettyPrinted) {
+                            args = String(data: argsData, encoding: .utf8)
+                        } else {
+                            args = nil
+                        }
+                    } else {
+                        args = nil
+                    }
+                    segments.append(.toolCall(name: name, arguments: args))
+                }
+            } else if let nameRange = Range(match.range(at: 4), in: remaining),
+                      let resultRange = Range(match.range(at: 5), in: remaining) {
+                // Tool result
+                let name = String(remaining[nameRange])
+                let result = String(remaining[resultRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                segments.append(.toolResult(name: name, result: result))
+            }
+            
+            lastEnd = matchRange.upperBound
+        }
+        
+        // Add remaining text
+        if lastEnd < remaining.endIndex {
+            let textAfter = String(remaining[lastEnd...])
+            if !textAfter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                segments.append(.text(textAfter))
+            }
+        }
+        
+        // If no segments found, return the whole content as text
+        if segments.isEmpty {
+            return [.text(content)]
+        }
+        
+        return segments
     }
 }
 
@@ -1869,6 +2118,7 @@ struct SettingsView: View {
     enum Tab: Hashable {
         case general
         case apiKeys
+        case mcpServers
         case permissions
     }
 
@@ -1890,13 +2140,19 @@ struct SettingsView: View {
                 }
                 .tag(Tab.apiKeys)
 
+            MCPServersSettingsTab()
+                .tabItem {
+                    Label("MCP Servers", systemImage: "server.rack")
+                }
+                .tag(Tab.mcpServers)
+
             PermissionsSettingsTab()
                 .tabItem {
                     Label("Permissions", systemImage: "lock.shield")
                 }
                 .tag(Tab.permissions)
         }
-        .frame(width: 500, height: 450)
+        .frame(width: 550, height: 500)
         .padding()
         .overlay(alignment: .bottomTrailing) {
             Button("Done") {
@@ -2611,6 +2867,341 @@ private struct APIKeysSettingsTab: View {
     }
 }
 
+// MARK: - MCP Servers Settings Tab
+private struct MCPServersSettingsTab: View {
+    @Environment(\.modelContext) private var modelContext
+    
+    @Query(sort: [SortDescriptor(\MCPServer.updatedAt, order: .reverse)])
+    private var servers: [MCPServer]
+    
+    @ObservedObject private var toolRegistry = MCPToolRegistry.shared
+    
+    @State private var selectedServerID: MCPServer.ID?
+    @State private var draftName: String = ""
+    @State private var draftEndpoint: String = ""
+    @State private var draftApiKey: String = ""
+    @State private var draftTransport: MCPTransport = .httpStreamable
+    @State private var isTestingConnection: Bool = false
+    @State private var connectionTestResult: String?
+    @State private var connectionTestSuccess: Bool = false
+    
+    private var selectedServer: MCPServer? {
+        servers.first(where: { $0.id == selectedServerID })
+    }
+    
+    var body: some View {
+        Form {
+            Section("MCP Integration") {
+                Toggle("Enable MCP Tools", isOn: $toolRegistry.isMCPEnabled)
+                Text("When enabled, tools from MCP servers are injected into your system prompt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                if toolRegistry.isMCPEnabled {
+                    HStack {
+                        Text("Available tools")
+                        Spacer()
+                        if toolRegistry.isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("\(toolRegistry.tools.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    Button("Refresh Tools") {
+                        Task {
+                            await toolRegistry.refreshTools(servers: servers)
+                        }
+                    }
+                    .disabled(toolRegistry.isLoading)
+                }
+            }
+            
+            Section("MCP Servers") {
+                Picker("Server", selection: $selectedServerID) {
+                    ForEach(servers) { server in
+                        HStack {
+                            Text(server.name)
+                            if !server.isEnabled {
+                                Text("(disabled)")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .tag(Optional(server.id))
+                    }
+                }
+                
+                if let server = selectedServer {
+                    // Server status indicator
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        serverStatusView(for: server.endpoint)
+                    }
+                    
+                    TextField("Server name", text: $draftName)
+                    
+                    TextField("Endpoint URL", text: $draftEndpoint)
+                        .textFieldStyle(.roundedBorder)
+                    Text("e.g., https://mcp.example.com/mcp")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    Picker("Transport", selection: $draftTransport) {
+                        ForEach(MCPTransport.allCases) { transport in
+                            Text(transport.displayName).tag(transport)
+                        }
+                    }
+                    
+                    SecureField("API key (optional)", text: $draftApiKey)
+                    
+                    Toggle("Enabled", isOn: Binding(
+                        get: { server.isEnabled },
+                        set: { newValue in
+                            server.isEnabled = newValue
+                            server.updatedAt = Date()
+                            try? modelContext.save()
+                            // Refresh tools when enabling/disabling
+                            Task { await toolRegistry.refreshTools(servers: servers) }
+                        }
+                    ))
+                    
+                    // Test connection button
+                    HStack {
+                        Button("Test Connection") {
+                            testConnection()
+                        }
+                        .disabled(isTestingConnection || draftEndpoint.isEmpty)
+                        
+                        if isTestingConnection {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        
+                        if let result = connectionTestResult {
+                            Text(result)
+                                .font(.caption)
+                                .foregroundStyle(connectionTestSuccess ? .green : .red)
+                        }
+                    }
+                    
+                    // Save button
+                    HStack {
+                        Spacer()
+                        Button("Save Server") {
+                            saveSelectedServer()
+                        }
+                        .disabled(!hasUnsavedChanges)
+                    }
+                }
+            }
+            
+            Section("Manage Servers") {
+                HStack {
+                    Button("Add Server") {
+                        addServer()
+                    }
+                    Spacer()
+                    Button("Delete", role: .destructive) {
+                        deleteSelectedServer()
+                    }
+                    .disabled(selectedServer == nil)
+                }
+            }
+            
+            // Available tools list
+            if toolRegistry.isMCPEnabled && !toolRegistry.tools.isEmpty {
+                Section("Available Tools (\(toolRegistry.tools.count))") {
+                    ForEach(toolRegistry.tools) { toolWithServer in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(toolWithServer.tool.name)
+                                    .font(.headline)
+                                Spacer()
+                                Text(toolWithServer.serverName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let description = toolWithServer.tool.description {
+                                Text(description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            selectInitialServerIfNeeded()
+        }
+        .onChange(of: selectedServerID) {
+            loadSelectedServerDrafts()
+            connectionTestResult = nil
+        }
+    }
+    
+    // MARK: - Server Status View
+    
+    @ViewBuilder
+    private func serverStatusView(for endpoint: String) -> some View {
+        switch toolRegistry.serverStatus[endpoint] {
+        case .unknown, .none:
+            HStack(spacing: 4) {
+                Circle().fill(Color.gray).frame(width: 8, height: 8)
+                Text("Not tested")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .connecting:
+            HStack(spacing: 4) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Connecting...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .connected(let name, let version):
+            HStack(spacing: 4) {
+                Circle().fill(Color.green).frame(width: 8, height: 8)
+                Text("Connected")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                if let name = name {
+                    Text("(\(name)\(version.map { " v\($0)" } ?? ""))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case .error(let message):
+            HStack(spacing: 4) {
+                Circle().fill(Color.red).frame(width: 8, height: 8)
+                Text("Error")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .help(message)
+            }
+        }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var hasUnsavedChanges: Bool {
+        guard let server = selectedServer else { return false }
+        return server.name != draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+            || server.endpoint != draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            || server.apiKey != draftApiKey
+            || server.transport != draftTransport
+    }
+    
+    // MARK: - Methods
+    
+    private func selectInitialServerIfNeeded() {
+        if selectedServerID == nil {
+            selectedServerID = servers.first?.id
+        }
+        loadSelectedServerDrafts()
+    }
+    
+    private func loadSelectedServerDrafts() {
+        guard let server = selectedServer else {
+            draftName = ""
+            draftEndpoint = ""
+            draftApiKey = ""
+            draftTransport = .httpStreamable
+            return
+        }
+        
+        draftName = server.name
+        draftEndpoint = server.endpoint
+        draftApiKey = server.apiKey
+        draftTransport = server.transport
+    }
+    
+    private func saveSelectedServer() {
+        guard let server = selectedServer else { return }
+        
+        server.name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        server.endpoint = draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        server.apiKey = draftApiKey
+        server.transport = draftTransport
+        server.updatedAt = Date()
+        
+        try? modelContext.save()
+        
+        // Refresh tools after save
+        Task { await toolRegistry.refreshTools(servers: servers) }
+    }
+    
+    private func addServer() {
+        let server = MCPServer(
+            name: "New MCP Server",
+            endpoint: "https://",
+            transport: .httpStreamable
+        )
+        modelContext.insert(server)
+        try? modelContext.save()
+        
+        selectedServerID = server.id
+    }
+    
+    private func deleteSelectedServer() {
+        guard let server = selectedServer else { return }
+        
+        let deletedEndpoint = server.endpoint
+        modelContext.delete(server)
+        try? modelContext.save()
+        
+        // Remove from registry
+        toolRegistry.removeClient(for: deletedEndpoint)
+        
+        selectedServerID = servers.first?.id
+    }
+    
+    private func testConnection() {
+        guard selectedServer != nil else { return }
+        
+        // Save current drafts to a temporary server for testing
+        let testServer = MCPServer(
+            name: draftName,
+            endpoint: draftEndpoint,
+            transport: draftTransport,
+            apiKey: draftApiKey
+        )
+        
+        isTestingConnection = true
+        connectionTestResult = nil
+        
+        Task {
+            do {
+                let result = try await toolRegistry.testConnection(server: testServer)
+                await MainActor.run {
+                    connectionTestSuccess = true
+                    if let name = result.serverName {
+                        connectionTestResult = "Connected to \(name)"
+                    } else {
+                        connectionTestResult = "Connected successfully"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    connectionTestSuccess = false
+                    connectionTestResult = error.localizedDescription
+                }
+            }
+            
+            await MainActor.run {
+                isTestingConnection = false
+            }
+        }
+    }
+}
+
 // MARK: - Permissions Settings Tab
 private struct PermissionsSettingsTab: View {
     @Environment(\.modelContext) private var modelContext
@@ -3016,7 +3607,7 @@ private struct AutomationAppRow: View {
 #Preview {
     ContentView()
         .modelContainer(
-            for: [ChatThread.self, ChatMessage.self, ProviderSettings.self, LLMProvider.self, AppPermissionRule.self],
+            for: [ChatThread.self, ChatMessage.self, ProviderSettings.self, LLMProvider.self, AppPermissionRule.self, MCPServer.self],
             inMemory: true
         )
 }

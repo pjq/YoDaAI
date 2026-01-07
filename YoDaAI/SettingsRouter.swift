@@ -8,6 +8,7 @@ final class SettingsRouter: ObservableObject {
     enum SettingsTab: Hashable {
         case general
         case apiKeys
+        case mcpServers
         case permissions
     }
 
