@@ -318,8 +318,30 @@ final class MCPToolRegistry: ObservableObject {
             throw MCPClientError.notInitialized
         }
         
-        // Call the tool using the actual (non-prefixed) name
-        let result = try await client.callTool(name: actualToolName, arguments: arguments)
+        // Find the server configuration to get the timeout
+        let server = servers.first(where: { $0.endpoint == foundTool.serverEndpoint })
+        let timeout = server?.timeoutInterval ?? 60.0
+        
+        print("[MCPToolRegistry] Calling tool '\(actualToolName)' with timeout: \(Int(timeout))s")
+        
+        // Call the tool with timeout
+        let result = try await withThrowingTaskGroup(of: MCPToolCallResult.self) { group in
+            group.addTask {
+                try await client.callTool(name: actualToolName, arguments: arguments)
+            }
+            
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw MCPClientError.timeout("Tool call timed out after \(Int(timeout)) seconds")
+            }
+            
+            // Return first result (either tool completion or timeout)
+            guard let result = try await group.next() else {
+                throw MCPClientError.timeout("Tool call failed")
+            }
+            group.cancelAll()
+            return result
+        }
         
         if result.hasError {
             return "Tool error: \(result.textContent ?? "Unknown error")"

@@ -19,7 +19,7 @@ enum MCPClientError: Error, LocalizedError {
     case mcpError(String)
     case connectionFailed(Error)
     case notInitialized
-    case timeout
+    case timeout(String)
     case serverNotAvailable
     case transportNotSupported
     
@@ -42,8 +42,8 @@ enum MCPClientError: Error, LocalizedError {
             return "Connection failed: \(error.localizedDescription)"
         case .notInitialized:
             return "MCP client not initialized. Call initialize() first."
-        case .timeout:
-            return "MCP request timed out"
+        case .timeout(let message):
+            return message
         case .serverNotAvailable:
             return "MCP server is not available"
         case .transportNotSupported:
