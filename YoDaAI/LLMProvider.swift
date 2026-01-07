@@ -8,7 +8,7 @@ final class LLMProvider: Identifiable {
     /// Display name shown in UI.
     var name: String
 
-    /// OpenAI-compatible base URL, e.g. http://localhost:11434/v1
+    /// OpenAI-compatible base URL, e.g. https://api.openai.com/v1
     var baseURL: String
 
     /// Optional bearer token.
@@ -25,10 +25,10 @@ final class LLMProvider: Identifiable {
 
     init(
         id: UUID = UUID(),
-        name: String = "Local (Ollama)",
-        baseURL: String = "http://localhost:11434/v1",
+        name: String = "OpenAI Compatible",
+        baseURL: String = "https://api.openai.com/v1",
         apiKey: String = "",
-        selectedModel: String = "llama3.1",
+        selectedModel: String = "",
         isDefault: Bool = true,
         createdAt: Date = Date(),
         updatedAt: Date = Date()

@@ -333,9 +333,9 @@ final class ChatViewModel: ObservableObject {
                 try context.save()
             }
         } catch {
-            lastErrorMessage = String(describing: error)
+            lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-
+        
         isSending = false
     }
     
@@ -357,7 +357,7 @@ final class ChatViewModel: ObservableObject {
             
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
         } catch {
-            lastErrorMessage = String(describing: error)
+            lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         
         isSending = false
@@ -391,7 +391,7 @@ final class ChatViewModel: ObservableObject {
             
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
         } catch {
-            lastErrorMessage = String(describing: error)
+            lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
         
         isSending = false

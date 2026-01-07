@@ -164,11 +164,46 @@ struct OpenAIModel: Codable, Hashable, Identifiable {
 
 enum OpenAICompatibleError: Error {
     case invalidBaseURL
+    case notConfigured
     case transport(Error)
     case badStatus(Int)
     case decoding(Error)
     case emptyResponse
     case streamingError(String)
+}
+
+extension OpenAICompatibleError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .invalidBaseURL:
+            return "Invalid server URL. Please check your provider settings."
+        case .notConfigured:
+            return "Provider is not configured. Please add an API key in Settings."
+        case .transport:
+            return "Network error. Please check your connection and try again."
+        case .badStatus(let status):
+            switch status {
+            case 401:
+                return "Unauthorized (401). Please verify your API key."
+            case 403:
+                return "Forbidden (403). Your API key may not have access to this model."
+            case 404:
+                return "Endpoint not found (404). Please check the provider base URL."
+            case 429:
+                return "Rate limited (429). Please wait and try again."
+            case 500...599:
+                return "Server error (\(status)). Please try again later."
+            default:
+                return "Unexpected server response (\(status))."
+            }
+        case .decoding:
+            return "Could not read the server response. Please try again."
+        case .emptyResponse:
+            return "The model returned an empty response."
+        case .streamingError(let message):
+            return message
+        }
+    }
 }
 
 final class OpenAICompatibleClient: @unchecked Sendable {

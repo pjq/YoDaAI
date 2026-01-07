@@ -439,6 +439,11 @@ final class ContentCacheService: ObservableObject {
             case -1743:
                 print("[ContentCacheService] ⚠️ Error -1743: YoDaAI needs Automation permission for \(appName)")
                 print("[ContentCacheService] Please grant permission in: System Settings → Privacy & Security → Automation")
+                DispatchQueue.main.async {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
             case -1728:
                 print("[ContentCacheService] ⚠️ Error -1728: \(appName) may not support this AppleScript command")
             default:

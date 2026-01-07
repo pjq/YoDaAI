@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var settingsRouter: SettingsRouter
 
     @Query(sort: [SortDescriptor(\ChatThread.createdAt, order: .reverse)])
     private var threads: [ChatThread]
@@ -18,7 +19,6 @@ struct ContentView: View {
     )
     @ObservedObject private var floatingPanelController = FloatingPanelController.shared
     @State private var activeThread: ChatThread?
-    @State private var isShowingSettings = false
     @State private var searchText = ""
 
     private var defaultProvider: LLMProvider? {
@@ -96,6 +96,12 @@ struct ContentView: View {
                     if let thread = activeThread {
                         deleteThread(thread)
                     }
+                },
+                onCreateNewChat: {
+                    createNewChat()
+                },
+                onOpenAPIKeysSettings: {
+                    settingsRouter.open(.apiKeys)
                 }
             )
         }
@@ -120,19 +126,44 @@ struct ContentView: View {
                     }
                     .help(floatingPanelController.isVisible ? "Hide capture panel" : "Show capture panel")
                     
-                    // Settings button
-                    Button {
-                        isShowingSettings = true
-                    } label: {
-                        Image(systemName: "gear")
-                    }
+                     // Settings button
+                     Button {
+                          settingsRouter.open(.general)
+                      } label: {
+                         Image(systemName: "gear")
+                     }
                     .help("Settings")
                 }
             }
         }
-        .sheet(isPresented: $isShowingSettings) {
-            SettingsView(viewModel: viewModel)
+        .sheet(isPresented: $settingsRouter.isPresented) {
+            SettingsView(
+                viewModel: viewModel,
+                selectedTab: Binding(
+                    get: {
+                        switch settingsRouter.selectedTab {
+                        case .general:
+                            return .general
+                        case .apiKeys:
+                            return .apiKeys
+                        case .permissions:
+                            return .permissions
+                        }
+                    },
+                    set: { tab in
+                        switch tab {
+                        case .general:
+                            settingsRouter.selectedTab = .general
+                        case .apiKeys:
+                            settingsRouter.selectedTab = .apiKeys
+                        case .permissions:
+                            settingsRouter.selectedTab = .permissions
+                        }
+                    }
+                )
+            )
         }
+
     }
 
     private func createNewChat() {
@@ -198,6 +229,8 @@ private struct ChatDetailView: View {
     var provider: LLMProvider?
     var providers: [LLMProvider]
     var onDeleteThread: () -> Void
+    var onCreateNewChat: () -> Void
+    var onOpenAPIKeysSettings: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -217,7 +250,7 @@ private struct ChatDetailView: View {
                 // Composer
                 ComposerView(viewModel: viewModel, thread: thread, providers: providers)
             } else {
-                EmptyStateView()
+                EmptyStateView(onCreateNewChat: onCreateNewChat, onOpenAPIKeysSettings: onOpenAPIKeysSettings)
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -355,19 +388,41 @@ private struct ChatHeaderView: View {
 // MARK: - Empty State
 private struct EmptyStateView: View {
     @ObservedObject private var scaleManager = AppScaleManager.shared
-    
+    var onCreateNewChat: () -> Void
+    var onOpenAPIKeysSettings: () -> Void
+
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.bubble.right")
-            .font(.system(size: 48 * scaleManager.scale))
-            .foregroundStyle(.tertiary)
+                .font(.system(size: 48 * scaleManager.scale))
+                .foregroundStyle(.tertiary)
 
             Text("Start a Conversation")
                 .font(.system(size: 22 * scaleManager.scale, weight: .medium))
 
-            Text("Create a new chat to get started")
-                .font(.system(size: 14 * scaleManager.scale))
-                .foregroundStyle(.secondary)
+            VStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Button("Click here to start") {
+                        onCreateNewChat()
+                    }
+                    .buttonStyle(.link)
+
+                    Text("or press Command + N")
+                        .font(.system(size: 12 * scaleManager.scale))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    Button("Open Settings") {
+                        onOpenAPIKeysSettings()
+                    }
+                    .buttonStyle(.link)
+
+                    Text("Shortcut: Command + ,")
+                        .font(.system(size: 12 * scaleManager.scale))
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -436,10 +491,10 @@ private struct MessageRowView: View {
     let onRetry: () -> Void
     let onDelete: () -> Void
 
-    @State private var isHovering = false
     @State private var showDeleteConfirmation = false
     @State private var pressedAction: MessageAction?
     @State private var showCopiedFeedback = false
+
 
     @ObservedObject private var scaleManager = AppScaleManager.shared
 
@@ -480,8 +535,8 @@ private struct MessageRowView: View {
                     }
                 }
 
-                // Action buttons on hover
-                if isHovering {
+                let isStreamingAssistantMessage = (message.role == .assistant && viewModel.streamingMessageID == message.id)
+                if !isStreamingAssistantMessage {
                     HStack(spacing: 8) {
                         actionButton(
                             action: .copy,
@@ -523,17 +578,11 @@ private struct MessageRowView: View {
                             showDeleteConfirmation = true
                         }
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
 
             if message.role != .user {
                 Spacer(minLength: 60)
-            }
-        }
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
             }
         }
         .alert("Delete Message?", isPresented: $showDeleteConfirmation) {
@@ -576,7 +625,7 @@ private struct MessageRowView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(nsColor: .controlBackgroundColor))
-                        .opacity(isHovering ? 0.9 : 0.0)
+                        .opacity(0.9)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
@@ -1816,26 +1865,36 @@ private struct ModelPickerPopover: View {
 }
 
 // MARK: - Settings View
-private struct SettingsView: View {
+struct SettingsView: View {
+    enum Tab: Hashable {
+        case general
+        case apiKeys
+        case permissions
+    }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: ChatViewModel
+    @Binding var selectedTab: Tab
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             GeneralSettingsTab(viewModel: viewModel)
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
-            
+                .tag(Tab.general)
+
             APIKeysSettingsTab()
                 .tabItem {
                     Label("API Keys", systemImage: "key")
                 }
-            
+                .tag(Tab.apiKeys)
+
             PermissionsSettingsTab()
                 .tabItem {
                     Label("Permissions", systemImage: "lock.shield")
                 }
+                .tag(Tab.permissions)
         }
         .frame(width: 500, height: 450)
         .padding()
@@ -2531,6 +2590,12 @@ private struct APIKeysSettingsTab: View {
     private func migrateLegacyProviderIfNeeded() {
         guard providers.isEmpty else { return }
         guard let legacy = legacySettingsRecords.first else { return }
+
+        let trimmedBaseURL = legacy.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let looksLikeOllama = trimmedBaseURL.contains("localhost:11434") || trimmedBaseURL.contains("127.0.0.1:11434")
+
+        // If legacy settings point to Ollama/localhost, skip migration and require explicit setup.
+        guard !looksLikeOllama else { return }
 
         let migrated = LLMProvider(
             name: "Migrated Provider",

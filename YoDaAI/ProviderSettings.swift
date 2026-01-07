@@ -14,9 +14,9 @@ final class ProviderSettings {
 
     init(
         id: UUID = UUID(),
-        baseURL: String = "http://localhost:11434/v1",
+        baseURL: String = "",
         apiKey: String = "",
-        model: String = "llama3.1",
+        model: String = "",
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
