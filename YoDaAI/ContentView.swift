@@ -3149,6 +3149,9 @@ private struct MCPServerDetailSheet: View {
     @State private var draftApiKey: String = ""
     @State private var draftTransport: MCPTransport = .httpStreamable
     @State private var draftTimeout: Int = 60
+    @State private var draftCustomHeaders: [String: String] = [:]
+    @State private var newHeaderKey: String = ""
+    @State private var newHeaderValue: String = ""
     @State private var isTestingConnection: Bool = false
     @State private var connectionTestResult: String?
     @State private var connectionTestSuccess: Bool = false
@@ -3160,6 +3163,7 @@ private struct MCPServerDetailSheet: View {
             || server.apiKey != draftApiKey
             || server.transport != draftTransport
             || server.connectionTimeout != draftTimeout
+            || server.customHeaders != draftCustomHeaders
     }
     
     private var serverStatus: MCPToolRegistry.ServerConnectionStatus {
@@ -3218,6 +3222,56 @@ private struct MCPServerDetailSheet: View {
                         Text("5 minutes").tag(300)
                         Text("10 minutes").tag(600)
                     }
+                }
+                
+                // Custom Headers Section
+                Section {
+                    ForEach(draftCustomHeaders.keys.sorted(), id: \.self) { key in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(key)
+                                    .font(.headline)
+                                Text(draftCustomHeaders[key] ?? "")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button {
+                                draftCustomHeaders.removeValue(forKey: key)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    
+                    // Add new header
+                    HStack {
+                        TextField("Header Name", text: $newHeaderKey)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Value", text: $newHeaderValue)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            let key = newHeaderKey.trimmingCharacters(in: .whitespaces)
+                            let value = newHeaderValue.trimmingCharacters(in: .whitespaces)
+                            if !key.isEmpty && !value.isEmpty {
+                                draftCustomHeaders[key] = value
+                                newHeaderKey = ""
+                                newHeaderValue = ""
+                            }
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(newHeaderKey.trimmingCharacters(in: .whitespaces).isEmpty || newHeaderValue.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } header: {
+                    Text("Custom Headers")
+                } footer: {
+                    Text("Add custom HTTP headers for authentication or other purposes. API Key header is added automatically if set above.")
                 }
                 
                 // Test Connection Section
@@ -3350,6 +3404,7 @@ private struct MCPServerDetailSheet: View {
         draftApiKey = server.apiKey
         draftTransport = server.transport
         draftTimeout = server.connectionTimeout
+        draftCustomHeaders = server.customHeaders
     }
     
     private func saveServer() {
@@ -3358,6 +3413,7 @@ private struct MCPServerDetailSheet: View {
         server.apiKey = draftApiKey
         server.transport = draftTransport
         server.connectionTimeout = draftTimeout
+        server.customHeaders = draftCustomHeaders
         server.updatedAt = Date()
         
         try? modelContext.save()
@@ -3384,8 +3440,10 @@ private struct MCPServerDetailSheet: View {
             name: draftName,
             endpoint: draftEndpoint,
             transport: draftTransport,
-            apiKey: draftApiKey
+            apiKey: draftApiKey,
+            timeout: draftTimeout
         )
+        testServer.customHeaders = draftCustomHeaders
         
         isTestingConnection = true
         connectionTestResult = nil
@@ -3428,6 +3486,9 @@ private struct MCPServerAddSheet: View {
     @State private var apiKey: String = ""
     @State private var transport: MCPTransport = .sse
     @State private var timeout: Int = 60
+    @State private var customHeaders: [String: String] = [:]
+    @State private var newHeaderKey: String = ""
+    @State private var newHeaderValue: String = ""
     @State private var isEnabled: Bool = true
     @State private var isTestingConnection: Bool = false
     @State private var connectionTestResult: String?
@@ -3467,6 +3528,56 @@ private struct MCPServerAddSheet: View {
                     }
                     
                     Toggle("Enable after adding", isOn: $isEnabled)
+                }
+                
+                // Custom Headers Section
+                Section {
+                    ForEach(customHeaders.keys.sorted(), id: \.self) { key in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(key)
+                                    .font(.headline)
+                                Text(customHeaders[key] ?? "")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button {
+                                customHeaders.removeValue(forKey: key)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    
+                    // Add new header
+                    HStack {
+                        TextField("Header Name", text: $newHeaderKey)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Value", text: $newHeaderValue)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            let key = newHeaderKey.trimmingCharacters(in: .whitespaces)
+                            let value = newHeaderValue.trimmingCharacters(in: .whitespaces)
+                            if !key.isEmpty && !value.isEmpty {
+                                customHeaders[key] = value
+                                newHeaderKey = ""
+                                newHeaderValue = ""
+                            }
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(newHeaderKey.trimmingCharacters(in: .whitespaces).isEmpty || newHeaderValue.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } header: {
+                    Text("Custom Headers")
+                } footer: {
+                    Text("Add custom HTTP headers for authentication or other purposes.")
                 }
                 
                 Section {
@@ -3521,6 +3632,7 @@ private struct MCPServerAddSheet: View {
             timeout: timeout
         )
         server.isEnabled = isEnabled
+        server.customHeaders = customHeaders
         
         modelContext.insert(server)
         try? modelContext.save()
@@ -3536,8 +3648,10 @@ private struct MCPServerAddSheet: View {
             name: name,
             endpoint: endpoint,
             transport: transport,
-            apiKey: apiKey
+            apiKey: apiKey,
+            timeout: timeout
         )
+        testServer.customHeaders = customHeaders
         
         isTestingConnection = true
         connectionTestResult = nil
