@@ -89,6 +89,7 @@ struct ScaledText: View {
 @main
 struct YoDaAIApp: App {
     @StateObject private var scaleManager = AppScaleManager.shared
+    @StateObject private var settingsRouter = SettingsRouter()
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -113,6 +114,7 @@ struct YoDaAIApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(scaleManager)
+                .environmentObject(settingsRouter)
         }
         .modelContainer(sharedModelContainer)
         .commands {
