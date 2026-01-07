@@ -46,7 +46,15 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             // MARK: - Sidebar
-            List(selection: $activeThread) {
+            List(selection: Binding(
+                get: { activeThread },
+                set: { newValue in
+                    // Only allow changing threads when not sending
+                    if !viewModel.isSending {
+                        activeThread = newValue
+                    }
+                }
+            )) {
                 if !todayThreads.isEmpty {
                     Section("Today") {
                         ForEach(todayThreads) { thread in
@@ -79,14 +87,12 @@ struct ContentView: View {
             .scrollContentBackground(.hidden)
             .searchable(text: $searchText, placement: .sidebar, prompt: "Search chats")
             .navigationTitle("Chats")
-            .disabled(viewModel.isSending) // Disable chat switching during API calls
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: createNewChat) {
                         Label("New Chat", systemImage: "square.and.pencil")
                     }
                     .help("New Chat (Cmd+N)")
-                    .keyboardShortcut("n", modifiers: .command)
                     .disabled(viewModel.isSending) // Disable new chat during API calls
                 }
             }
@@ -121,6 +127,12 @@ struct ContentView: View {
         .onAppear {
             if activeThread == nil {
                 activeThread = threads.first
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .createNewChat)) { _ in
+            // Only create new chat when not sending
+            if !viewModel.isSending {
+                createNewChat()
             }
         }
         .toolbar {
@@ -1563,23 +1575,44 @@ private struct ComposerView: View {
 
                     Spacer()
 
-                    // Send button
-                    Button {
-                        sendMessage()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.5))
+                    // Send/Stop button
+                    if viewModel.isSending {
+                        // Stop button when sending
+                        Button {
+                            viewModel.stopGenerating()
+                        } label: {
+                            Image(systemName: "stop.circle.fill")
+                                .font(.system(size: 24))
+                                .foregroundStyle(Color.red)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Stop generating (Esc)")
+                    } else {
+                        // Send button when not sending
+                        Button {
+                            sendMessage()
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 24))
+                                .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.5))
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(!canSend)
+                        .keyboardShortcut(.return, modifiers: .command)
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(!canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .onKeyPress(.escape) {
+            if viewModel.isSending {
+                viewModel.stopGenerating()
+                return .handled
+            }
+            return .ignored
+        }
     }
 
     private var canSend: Bool {
@@ -1594,7 +1627,7 @@ private struct ComposerView: View {
             viewModel.composerText = String(viewModel.composerText.dropLast())
         }
         viewModel.activeThreadID = thread.id
-        Task { await viewModel.send(in: modelContext) }
+        viewModel.startSending(in: modelContext)
     }
 
     // MARK: - Image Handling

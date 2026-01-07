@@ -86,10 +86,18 @@ struct ScaledText: View {
     }
 }
 
+// MARK: - App State (shared across app)
+final class AppState: ObservableObject {
+    static let shared = AppState()
+    @Published var isSending: Bool = false
+    private init() {}
+}
+
 @main
 struct YoDaAIApp: App {
     @StateObject private var scaleManager = AppScaleManager.shared
     @StateObject private var settingsRouter = SettingsRouter()
+    @StateObject private var appState = AppState.shared
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -118,6 +126,15 @@ struct YoDaAIApp: App {
         }
         .modelContainer(sharedModelContainer)
         .commands {
+            // Replace default "New Window" (Cmd+N) with "New Chat"
+            CommandGroup(replacing: .newItem) {
+                Button("New Chat") {
+                    NotificationCenter.default.post(name: .createNewChat, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(appState.isSending) // Disable during API calls
+            }
+            
             // View menu with zoom commands
             CommandGroup(after: .toolbar) {
                 Button("Increase Text Size") {
@@ -148,6 +165,11 @@ struct YoDaAIApp: App {
         }
         .modelContainer(sharedModelContainer)
     }
+}
+
+// MARK: - Notification for New Chat
+extension Notification.Name {
+    static let createNewChat = Notification.Name("createNewChat")
 }
 
 // MARK: - App Settings View (for Settings scene)

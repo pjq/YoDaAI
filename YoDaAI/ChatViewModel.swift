@@ -49,7 +49,12 @@ final class LLMSettings: ObservableObject {
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var composerText: String = ""
-    @Published var isSending: Bool = false
+    @Published var isSending: Bool = false {
+        didSet {
+            // Sync with AppState for menu commands
+            AppState.shared.isSending = isSending
+        }
+    }
     @Published var lastErrorMessage: String?
     @Published var imageErrorMessage: String?  // Error message for image operations
     @Published var alwaysAttachAppContext: Bool = true
@@ -60,6 +65,9 @@ final class ChatViewModel: ObservableObject {
     @Published var mentionSearchText: String = ""  // Filter text for mention picker
     @Published var pendingImages: [PendingImage] = []  // Images being composed
     var activeThreadID: UUID?
+    
+    // Task tracking for cancellation
+    private var currentTask: Task<Void, Never>?
 
     // MARK: - Pending Image Model
 
@@ -277,6 +285,21 @@ final class ChatViewModel: ObservableObject {
         return created
     }
 
+    /// Stop the current generation/API call
+    func stopGenerating() {
+        currentTask?.cancel()
+        currentTask = nil
+        isSending = false
+        streamingMessageID = nil  // Clear streaming indicator
+    }
+    
+    /// Start sending with Task tracking for cancellation
+    func startSending(in context: ModelContext) {
+        currentTask = Task {
+            await send(in: context)
+        }
+    }
+
     func send(in context: ModelContext) async {
         let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         // Allow sending if there's text OR images
@@ -295,7 +318,16 @@ final class ChatViewModel: ObservableObject {
         mentionedAppContexts = [:]
         pendingImages = []
 
+        defer {
+            isSending = false
+            currentTask = nil
+            streamingMessageID = nil
+        }
+
         do {
+            // Check for cancellation early
+            try Task.checkCancellation()
+            
             let provider = try ensureDefaultProvider(in: context)
             let thread = try ensureThread(in: context)
 
@@ -305,6 +337,8 @@ final class ChatViewModel: ObservableObject {
 
             // Save images to disk and create attachments
             for pendingImage in imagesToSend {
+                try Task.checkCancellation()
+                
                 let result = try ImageStorageService.shared.saveImage(
                     data: pendingImage.data,
                     originalFileName: pendingImage.fileName
@@ -332,19 +366,28 @@ final class ChatViewModel: ObservableObject {
                 thread.title = generateThreadTitle(from: titleText)
                 try context.save()
             }
+        } catch is CancellationError {
+            // User cancelled - this is expected, don't show error
+            print("[ChatViewModel] Generation cancelled by user")
         } catch {
             lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-        
-        isSending = false
     }
     
     /// Retry: delete the last assistant message and regenerate
     func retryLastResponse(in context: ModelContext) async {
         isSending = true
         lastErrorMessage = nil
-        
+
+        defer {
+            isSending = false
+            currentTask = nil
+            streamingMessageID = nil
+        }
+
         do {
+            try Task.checkCancellation()
+            
             let provider = try ensureDefaultProvider(in: context)
             let thread = try ensureThread(in: context)
             
@@ -356,21 +399,29 @@ final class ChatViewModel: ObservableObject {
             }
             
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
+        } catch is CancellationError {
+            print("[ChatViewModel] Retry cancelled by user")
         } catch {
             lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-        
-        isSending = false
     }
     
     /// Retry from a specific message: delete all messages after it and regenerate
     func retryFrom(message: ChatMessage, in context: ModelContext) async {
         guard let thread = message.thread else { return }
-        
+
         isSending = true
         lastErrorMessage = nil
-        
+
+        defer {
+            isSending = false
+            currentTask = nil
+            streamingMessageID = nil
+        }
+
         do {
+            try Task.checkCancellation()
+            
             let provider = try ensureDefaultProvider(in: context)
             
             // Delete all messages after this one
@@ -390,11 +441,11 @@ final class ChatViewModel: ObservableObject {
             try context.save()
             
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
+        } catch is CancellationError {
+            print("[ChatViewModel] Retry from message cancelled by user")
         } catch {
             lastErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-        
-        isSending = false
     }
     
     /// Delete a specific message
@@ -539,13 +590,16 @@ final class ChatViewModel: ObservableObject {
         let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread)
         context.insert(assistantMessage)
         try context.save()
-        
+
         // Track the streaming message
         streamingMessageID = assistantMessage.id
         
         defer {
             streamingMessageID = nil
         }
+        
+        // Check for cancellation before streaming
+        try Task.checkCancellation()
         
         // Stream the response
         let stream = client.createChatCompletionStream(
@@ -557,14 +611,54 @@ final class ChatViewModel: ObservableObject {
             maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
         )
         
+        // Track if we've detected tool calls during streaming
+        var detectedToolCallDuringStream = false
+        var fullResponseWithToolCalls = ""
+
         for try await chunk in stream {
-            assistantMessage.content += chunk
+            // Check for cancellation BEFORE updating UI
+            try Task.checkCancellation()
+
+            // Check if this chunk or accumulated content contains tool call start
+            if toolRegistry.isMCPEnabled && !detectedToolCallDuringStream {
+                // Check if we're starting to see tool call tags
+                let combined = assistantMessage.content + chunk
+                if combined.contains("<tool_call>") {
+                    detectedToolCallDuringStream = true
+                    // Extract content before tool call for UI display
+                    if let toolCallRange = combined.range(of: "<tool_call>") {
+                        let contentBeforeToolCall = String(combined[..<toolCallRange.lowerBound])
+                        assistantMessage.content = contentBeforeToolCall
+                        try context.save()
+                        // Save the full combined string (includes start of tool call)
+                        fullResponseWithToolCalls = combined
+                        // Don't break yet - continue collecting the rest of the tool call
+                        continue
+                    }
+                }
+            }
+
+            // If we've detected tool calls, accumulate in fullResponse instead of showing in UI
+            if detectedToolCallDuringStream {
+                fullResponseWithToolCalls += chunk
+            } else {
+                // Normal streaming to UI
+                assistantMessage.content += chunk
+            }
         }
-        
-        try context.save()
-        
-        // Check for tool calls and execute them (MCP tool loop)
-        if toolRegistry.isMCPEnabled {
+
+        // If we detected tool calls during streaming, execute them
+        if detectedToolCallDuringStream {
+
+            // Check for cancellation before tool calls
+            try Task.checkCancellation()
+
+            // Show tool execution indicator
+            assistantMessage.content += "\n\n🔧 Executing tools..."
+            try context.save()
+
+            print("[MCP] Full response with tool calls (first 500): \(fullResponseWithToolCalls.prefix(500))")
+
             let mcpServers = (try? context.fetch(FetchDescriptor<MCPServer>())) ?? []
             try await executeToolCallsIfNeeded(
                 assistantMessage: assistantMessage,
@@ -573,9 +667,16 @@ final class ChatViewModel: ObservableObject {
                 mcpServers: mcpServers,
                 requestMessages: requestMessages,
                 settings: settings,
-                in: context
+                in: context,
+                fullResponseWithToolCalls: fullResponseWithToolCalls
             )
+        } else {
+            // No tool calls detected, just save the complete message
+            try context.save()
         }
+
+        // Clear streaming indicator after everything is done
+        streamingMessageID = nil
     }
     
     // MARK: - MCP Tool Execution
@@ -589,7 +690,8 @@ final class ChatViewModel: ObservableObject {
         requestMessages: [OpenAIChatMessage],
         settings: LLMSettings,
         in context: ModelContext,
-        depth: Int = 0
+        depth: Int = 0,
+        fullResponseWithToolCalls: String? = nil
     ) async throws {
         // Limit recursion depth to prevent infinite loops
         let maxToolIterations = 5
@@ -597,15 +699,19 @@ final class ChatViewModel: ObservableObject {
             print("[MCP] Max tool iterations reached (\(maxToolIterations))")
             return
         }
-        
+
         let toolRegistry = MCPToolRegistry.shared
-        
+
+        // Use fullResponseWithToolCalls if provided (when we detected tool calls during streaming)
+        // Otherwise use assistantMessage.content
+        let contentToCheck = fullResponseWithToolCalls ?? assistantMessage.content
+
         // Debug: Log the assistant message content to see if it contains tool calls
         print("[MCP] Checking for tool calls in response...")
-        print("[MCP] Response content (first 500 chars): \(assistantMessage.content.prefix(500))")
-        print("[MCP] Contains <tool_call>: \(assistantMessage.content.contains("<tool_call>"))")
-        
-        let toolCalls = MCPToolRegistry.parseToolCalls(from: assistantMessage.content)
+        print("[MCP] Response content (first 500 chars): \(contentToCheck.prefix(500))")
+        print("[MCP] Contains <tool_call>: \(contentToCheck.contains("<tool_call>"))")
+
+        let toolCalls = MCPToolRegistry.parseToolCalls(from: contentToCheck)
         
         print("[MCP] Parsed tool calls count: \(toolCalls.count)")
         
@@ -615,30 +721,49 @@ final class ChatViewModel: ObservableObject {
         }
         
         print("[MCP] Found \(toolCalls.count) tool call(s) in response")
-        
-        // Store original content (with tool call XML)
-        let originalContent = assistantMessage.content
-        
+
+        // Store original content (with tool call XML) for sending back to LLM
+        let originalContent = contentToCheck
+
+        // Check if there's already text AFTER the last </tool_call> tag
+        // Some LLMs provide the complete response in one stream
+        var textAfterToolCalls: String? = nil
+        if let lastToolCallEnd = originalContent.range(of: "</tool_call>", options: .backwards) {
+            let afterToolCall = String(originalContent[lastToolCallEnd.upperBound...])
+            let trimmed = afterToolCall.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                textAfterToolCalls = trimmed
+                print("[MCP] Found text after tool calls: \(trimmed.prefix(200))")
+            }
+        }
+
+        // Extract the base content (text before any tool execution indicators)
+        // Remove any existing tool execution messages
+        var baseContent = assistantMessage.content
+        if let range = baseContent.range(of: "\n\n🔧 Executing tools...") {
+            baseContent = String(baseContent[..<range.lowerBound])
+        } else if let range = baseContent.range(of: "\n🔧 Executing") {
+            baseContent = String(baseContent[..<range.lowerBound])
+        }
+
         // Execute each tool call and collect results, showing progress to user
         var toolResults: [(name: String, result: String)] = []
-        
+
         for (index, (name, arguments)) in toolCalls.enumerated() {
-            // Update message to show tool execution progress
-            let progressText = formatToolExecutionProgress(
-                originalContent: originalContent,
-                currentTool: name,
-                toolIndex: index + 1,
-                totalTools: toolCalls.count,
-                completedResults: toolResults
-            )
-            assistantMessage.content = progressText
+            // Update message to show current tool execution progress
+            assistantMessage.content = baseContent + "\n🔧 Executing tool \(index + 1)/\(toolCalls.count): **\(name)**..."
             try context.save()
+            
+            // Check for cancellation before each tool call
+            try Task.checkCancellation()
             
             print("[MCP] Executing tool: \(name)")
             do {
                 let result = try await toolRegistry.callTool(name: name, arguments: arguments, servers: mcpServers)
                 toolResults.append((name: name, result: result))
                 print("[MCP] Tool \(name) returned: \(result.prefix(200))...")
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 let errorResult = "Error executing tool '\(name)': \(error.localizedDescription)"
                 toolResults.append((name: name, result: errorResult))
@@ -646,53 +771,67 @@ final class ChatViewModel: ObservableObject {
             }
         }
         
-        // Show all tool results before getting follow-up response
-        let completedText = formatToolExecutionComplete(
-            originalContent: originalContent,
-            results: toolResults
-        )
-        assistantMessage.content = completedText
-        try context.save()
-        
-        // Format tool results as a system message for the AI
+        // Check for cancellation before follow-up
+        try Task.checkCancellation()
+
+        // Format tool results for potential follow-up call
         let toolResultsContent = formatToolResults(toolResults)
-        
+
         // Build updated message history including the tool results
         var updatedMessages = requestMessages
-        
-        // Add the assistant's response (with tool calls)
         updatedMessages.append(OpenAIChatMessage(role: "assistant", content: originalContent))
-        
-        // Add tool results as a system message
         updatedMessages.append(OpenAIChatMessage(role: "system", content: toolResultsContent))
-        
-        // Create a new assistant message for the follow-up response
-        let followUpMessage = ChatMessage(role: .assistant, content: "", thread: thread)
-        context.insert(followUpMessage)
-        try context.save()
-        
-        // Update streaming message ID
-        streamingMessageID = followUpMessage.id
-        
-        // Stream the follow-up response
-        let stream = client.createChatCompletionStream(
-            baseURL: provider.baseURL,
-            apiKey: provider.apiKey,
-            model: provider.selectedModel,
-            messages: updatedMessages,
-            temperature: settings.temperature,
-            maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
-        )
-        
-        for try await chunk in stream {
-            followUpMessage.content += chunk
+
+        // Check if LLM already provided text after tool calls
+        if let existingResponse = textAfterToolCalls {
+            // LLM already provided the response - just display it!
+            print("[MCP] Using existing response from after tool calls")
+            assistantMessage.content = baseContent + "\n\n" + existingResponse
+            try context.save()
+        } else {
+            // No response after tool calls - need to make follow-up API call
+            print("[MCP] No text after tool calls, making follow-up API call")
+
+            // Show tool execution completion
+            assistantMessage.content = baseContent + "\n✅ Tools completed. Generating response..."
+            try context.save()
+
+            // Check for cancellation before streaming follow-up
+            try Task.checkCancellation()
+
+            // Stream the follow-up response into the SAME message
+            let stream = client.createChatCompletionStream(
+                baseURL: provider.baseURL,
+                apiKey: provider.apiKey,
+                model: provider.selectedModel,
+                messages: updatedMessages,
+                temperature: settings.temperature,
+                maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
+            )
+
+            // Continue streaming the final response into the same message
+            // Reset to base content and prepare for streaming
+            assistantMessage.content = baseContent + "\n\n"
+            try context.save()  // Save the reset state
+
+            print("[MCP] Starting to stream follow-up response...")
+            streamingMessageID = assistantMessage.id
+
+            var chunkCount = 0
+            for try await chunk in stream {
+                try Task.checkCancellation()
+                assistantMessage.content += chunk
+                chunkCount += 1
+            }
+
+            print("[MCP] Follow-up streaming complete. Received \(chunkCount) chunks")
+            streamingMessageID = nil
+            try context.save()
         }
-        
-        try context.save()
-        
-        // Recursively check for more tool calls
+
+        // Recursively check for more tool calls in the follow-up response
         try await executeToolCallsIfNeeded(
-            assistantMessage: followUpMessage,
+            assistantMessage: assistantMessage,
             thread: thread,
             provider: provider,
             mcpServers: mcpServers,
