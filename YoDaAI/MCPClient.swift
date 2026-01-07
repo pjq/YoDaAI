@@ -140,63 +140,93 @@ actor MCPClient {
         
         print("[MCPClient] Connecting to SSE endpoint: \(url)")
         
+        // Use a dedicated session with longer timeout for SSE
+        let sseConfig = URLSessionConfiguration.default
+        sseConfig.timeoutIntervalForRequest = 60
+        sseConfig.timeoutIntervalForResource = 120
+        let sseSession = URLSession(configuration: sseConfig)
+        
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = timeout
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         
         // Add custom headers
         for (key, value) in server.buildHeaders() {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
-        // Make the request and parse SSE events to get the endpoint
-        let (bytes, response) = try await session.bytes(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw MCPClientError.invalidResponse
-        }
-        
-        print("[MCPClient] SSE connection status: \(httpResponse.statusCode)")
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: "Failed to connect to SSE endpoint")
-        }
-        
-        // Parse SSE stream to find the endpoint event
-        var currentEvent: String?
-        var currentData: String?
-        
-        for try await line in bytes.lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            
-            if trimmed.isEmpty {
-                // Empty line means end of event
-                if currentEvent == "endpoint", let data = currentData {
-                    // Parse the endpoint URL
-                    let endpointPath = data.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Use withThrowingTaskGroup to add timeout and proper cancellation
+        try await withThrowingTaskGroup(of: URL.self) { group in
+            // Task to read SSE stream
+            group.addTask {
+                let (bytes, response) = try await sseSession.bytes(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw MCPClientError.invalidResponse
+                }
+                
+                print("[MCPClient] SSE connection status: \(httpResponse.statusCode)")
+                
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: "Failed to connect to SSE endpoint")
+                }
+                
+                // Parse SSE stream to find the endpoint event
+                var currentEvent: String?
+                var currentData: String?
+                
+                for try await line in bytes.lines {
+                    // Check for cancellation
+                    try Task.checkCancellation()
                     
-                    // Build full URL from relative or absolute path
-                    if let endpointURL = URL(string: endpointPath, relativeTo: url)?.absoluteURL {
-                        self.ssePostEndpoint = endpointURL
-                        print("[MCPClient] SSE endpoint received: \(endpointURL)")
-                        return
-                    } else if let endpointURL = URL(string: endpointPath) {
-                        self.ssePostEndpoint = endpointURL
-                        print("[MCPClient] SSE endpoint received: \(endpointURL)")
-                        return
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    print("[MCPClient] SSE line: \(trimmed)")
+                    
+                    if trimmed.isEmpty {
+                        // Empty line means end of event
+                        if currentEvent == "endpoint", let data = currentData {
+                            // Parse the endpoint URL
+                            let endpointPath = data.trimmingCharacters(in: .whitespacesAndNewlines)
+                            
+                            // Build full URL from relative or absolute path
+                            if let endpointURL = URL(string: endpointPath, relativeTo: url)?.absoluteURL {
+                                print("[MCPClient] SSE endpoint received: \(endpointURL)")
+                                return endpointURL
+                            } else if let endpointURL = URL(string: endpointPath) {
+                                print("[MCPClient] SSE endpoint received: \(endpointURL)")
+                                return endpointURL
+                            }
+                        }
+                        currentEvent = nil
+                        currentData = nil
+                    } else if trimmed.hasPrefix("event:") {
+                        currentEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                        print("[MCPClient] SSE event type: \(currentEvent ?? "nil")")
+                    } else if trimmed.hasPrefix("data:") {
+                        currentData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                        print("[MCPClient] SSE data: \(currentData ?? "nil")")
                     }
                 }
-                currentEvent = nil
-                currentData = nil
-            } else if trimmed.hasPrefix("event:") {
-                currentEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            } else if trimmed.hasPrefix("data:") {
-                currentData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                
+                throw MCPClientError.sseEndpointNotReceived
             }
+            
+            // Timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds timeout
+                throw MCPClientError.timeout
+            }
+            
+            // Wait for the first task to complete (either endpoint received or timeout)
+            if let endpointURL = try await group.next() {
+                self.ssePostEndpoint = endpointURL
+                group.cancelAll() // Cancel the other task
+                return
+            }
+            
+            throw MCPClientError.sseEndpointNotReceived
         }
-        
-        throw MCPClientError.sseEndpointNotReceived
     }
     
     // MARK: - Tools
