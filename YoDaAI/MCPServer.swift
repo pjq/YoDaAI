@@ -32,6 +32,9 @@ final class MCPServer {
     /// Additional headers as JSON string (for custom auth)
     var customHeadersJSON: String = "{}"
     
+    /// Connection timeout in seconds (default: 60)
+    var connectionTimeout: Int = 60
+    
     /// When this server was created
     var createdAt: Date = Date()
     
@@ -42,6 +45,11 @@ final class MCPServer {
     var transport: MCPTransport {
         get { MCPTransport(rawValue: transportRawValue) ?? .httpStreamable }
         set { transportRawValue = newValue.rawValue }
+    }
+    
+    /// Get timeout as TimeInterval
+    var timeoutInterval: TimeInterval {
+        TimeInterval(max(10, connectionTimeout))  // Minimum 10 seconds
     }
     
     /// Parse custom headers from JSON
@@ -63,7 +71,7 @@ final class MCPServer {
     
     init() {}
     
-    init(name: String, endpoint: String, transport: MCPTransport = .httpStreamable, apiKey: String = "") {
+    init(name: String, endpoint: String, transport: MCPTransport = .httpStreamable, apiKey: String = "", timeout: Int = 60) {
         self.id = UUID()
         self.name = name
         self.endpoint = endpoint
@@ -71,6 +79,7 @@ final class MCPServer {
         self.apiKey = apiKey
         self.isEnabled = true
         self.customHeadersJSON = "{}"
+        self.connectionTimeout = timeout
         self.createdAt = Date()
         self.updatedAt = Date()
     }

@@ -30,16 +30,38 @@ public actor LegacySSETransport: Transport {
     private var endpointContinuation: CheckedContinuation<URL, Error>?
     
     private let requestModifier: (URLRequest) -> URLRequest
+    private let connectionTimeout: TimeInterval
     
     /// Creates a new legacy SSE transport
+    /// - Parameters:
+    ///   - endpoint: The SSE endpoint URL
+    ///   - timeout: Connection timeout in seconds (default: 60)
+    ///   - configuration: Optional URLSession configuration
+    ///   - requestModifier: Closure to modify requests (e.g., add auth headers)
+    ///   - logger: Optional logger
     public init(
         endpoint: URL,
-        configuration: URLSessionConfiguration = .default,
+        timeout: TimeInterval = 60,
+        configuration: URLSessionConfiguration? = nil,
         requestModifier: @escaping (URLRequest) -> URLRequest = { $0 },
         logger: Logger? = nil
     ) {
         self.endpoint = endpoint
-        self.session = URLSession(configuration: configuration)
+        self.connectionTimeout = timeout
+        
+        // Configure session for long-lived SSE connections
+        let config = configuration ?? {
+            let c = URLSessionConfiguration.default
+            // Use the provided timeout for initial connection
+            c.timeoutIntervalForRequest = timeout
+            // Resource timeout should be longer for SSE streams
+            c.timeoutIntervalForResource = max(timeout * 10, 3600)  // At least 1 hour
+            // Allow SSE to work properly
+            c.requestCachePolicy = .reloadIgnoringLocalCacheData
+            return c
+        }()
+        
+        self.session = URLSession(configuration: config)
         self.requestModifier = requestModifier
         
         // Create message stream
@@ -57,14 +79,14 @@ public actor LegacySSETransport: Transport {
     public func connect() async throws {
         guard !isConnected else { return }
         
-        print("[LegacySSE] Connecting to SSE endpoint: \(endpoint)")
+        print("[LegacySSE] Connecting to SSE endpoint: \(endpoint) (timeout: \(Int(connectionTimeout))s)")
         
         // Start SSE connection task
         sseTask = Task {
             await startSSEConnection()
         }
         
-        // Wait for the endpoint event with timeout
+        // Wait for the endpoint event with configurable timeout
         do {
             messageEndpoint = try await withThrowingTaskGroup(of: URL.self) { group in
                 group.addTask {
@@ -73,9 +95,9 @@ public actor LegacySSETransport: Transport {
                     }
                 }
                 
-                group.addTask {
-                    try await Task.sleep(for: .seconds(30))
-                    throw MCPError.internalError("Timeout waiting for endpoint event")
+                group.addTask { [connectionTimeout] in
+                    try await Task.sleep(for: .seconds(connectionTimeout))
+                    throw MCPError.internalError("Timeout waiting for endpoint event after \(Int(connectionTimeout))s")
                 }
                 
                 if let result = try await group.next() {
@@ -161,6 +183,8 @@ public actor LegacySSETransport: Transport {
         request.httpMethod = "GET"
         request.addValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.addValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        // Use longer timeout for SSE - the stream should stay open
+        request.timeoutInterval = max(connectionTimeout * 10, 3600)
         
         // Apply request modifier
         request = requestModifier(request)

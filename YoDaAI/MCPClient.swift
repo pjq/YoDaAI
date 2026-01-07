@@ -76,7 +76,7 @@ actor MCPClientWrapper {
             throw MCPClientError.invalidURL
         }
         
-        print("[MCPClient] Connecting to MCP server: \(url) (transport: \(server.transport.displayName))")
+        print("[MCPClient] Connecting to MCP server: \(url) (transport: \(server.transport.displayName), timeout: \(server.connectionTimeout)s)")
         
         // Create the MCP client
         let mcpClient = Client(
@@ -111,6 +111,7 @@ actor MCPClientWrapper {
             // Legacy SSE transport (for servers like AMAP)
             let sseTransport = LegacySSETransport(
                 endpoint: url,
+                timeout: server.timeoutInterval,
                 requestModifier: { [server] request in
                     var modifiedRequest = request
                     for (key, value) in server.buildHeaders() {

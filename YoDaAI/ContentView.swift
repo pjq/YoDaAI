@@ -3148,6 +3148,7 @@ private struct MCPServerDetailSheet: View {
     @State private var draftEndpoint: String = ""
     @State private var draftApiKey: String = ""
     @State private var draftTransport: MCPTransport = .httpStreamable
+    @State private var draftTimeout: Int = 60
     @State private var isTestingConnection: Bool = false
     @State private var connectionTestResult: String?
     @State private var connectionTestSuccess: Bool = false
@@ -3158,6 +3159,7 @@ private struct MCPServerDetailSheet: View {
             || server.endpoint != draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
             || server.apiKey != draftApiKey
             || server.transport != draftTransport
+            || server.connectionTimeout != draftTimeout
     }
     
     private var serverStatus: MCPToolRegistry.ServerConnectionStatus {
@@ -3208,6 +3210,15 @@ private struct MCPServerDetailSheet: View {
                     }
                     
                     SecureField("API Key (optional)", text: $draftApiKey)
+                    
+                    Stepper(value: $draftTimeout, in: 10...300, step: 10) {
+                        HStack {
+                            Text("Connection Timeout")
+                            Spacer()
+                            Text("\(draftTimeout)s")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 
                 // Test Connection Section
@@ -3339,6 +3350,7 @@ private struct MCPServerDetailSheet: View {
         draftEndpoint = server.endpoint
         draftApiKey = server.apiKey
         draftTransport = server.transport
+        draftTimeout = server.connectionTimeout
     }
     
     private func saveServer() {
@@ -3346,6 +3358,7 @@ private struct MCPServerDetailSheet: View {
         server.endpoint = draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         server.apiKey = draftApiKey
         server.transport = draftTransport
+        server.connectionTimeout = draftTimeout
         server.updatedAt = Date()
         
         try? modelContext.save()
@@ -3415,6 +3428,7 @@ private struct MCPServerAddSheet: View {
     @State private var endpoint: String = "https://"
     @State private var apiKey: String = ""
     @State private var transport: MCPTransport = .sse
+    @State private var timeout: Int = 60
     @State private var isEnabled: Bool = true
     @State private var isTestingConnection: Bool = false
     @State private var connectionTestResult: String?
@@ -3444,6 +3458,15 @@ private struct MCPServerAddSheet: View {
                     }
                     
                     SecureField("API Key (optional)", text: $apiKey)
+                    
+                    Stepper(value: $timeout, in: 10...300, step: 10) {
+                        HStack {
+                            Text("Connection Timeout")
+                            Spacer()
+                            Text("\(timeout)s")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     
                     Toggle("Enable after adding", isOn: $isEnabled)
                 }
@@ -3496,7 +3519,8 @@ private struct MCPServerAddSheet: View {
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
             transport: transport,
-            apiKey: apiKey
+            apiKey: apiKey,
+            timeout: timeout
         )
         server.isEnabled = isEnabled
         
