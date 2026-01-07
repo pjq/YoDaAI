@@ -263,14 +263,29 @@ final class MCPToolRegistry: ObservableObject {
             }
         }
         
-        lines.append("To use a tool, respond with a tool call in this exact format:")
-        lines.append("<tool_call>")
-        lines.append("{\"name\": \"ServerName.tool_name\", \"arguments\": {\"param1\": \"value1\"}}")
-        lines.append("</tool_call>")
+        lines.append("## How to Call Tools")
         lines.append("")
-        lines.append("IMPORTANT: Always use the full tool name with server prefix (e.g., 'SplunkQuery.query_with_x_request_id_tool').")
-        lines.append("You may use multiple tool calls in a single response if needed.")
-        lines.append("After receiving tool results, incorporate them into your response to the user.")
+        lines.append("When you need to use a tool, you MUST use this EXACT format with JSON inside <tool_call> tags:")
+        lines.append("")
+        lines.append("```")
+        lines.append("<tool_call>")
+        lines.append("{\"name\": \"ServerName.tool_name\", \"arguments\": {\"param1\": \"value1\", \"param2\": \"value2\"}}")
+        lines.append("</tool_call>")
+        lines.append("```")
+        lines.append("")
+        lines.append("Example for SplunkQuery tool:")
+        lines.append("```")
+        lines.append("<tool_call>")
+        lines.append("{\"name\": \"SplunkQuery.get_splunk_query_context_tool\", \"arguments\": {\"query_description\": \"find active users\"}}")
+        lines.append("</tool_call>")
+        lines.append("```")
+        lines.append("")
+        lines.append("CRITICAL RULES:")
+        lines.append("1. Use EXACTLY <tool_call> and </tool_call> tags (not <execute>, <invoke>, or any other format)")
+        lines.append("2. The content MUST be valid JSON with \"name\" and \"arguments\" fields")
+        lines.append("3. Always include the server prefix in the tool name (e.g., \"SplunkQuery.tool_name\")")
+        lines.append("4. After I execute the tool, I will provide the results, then you should continue your response")
+        lines.append("5. Do NOT hallucinate or make up tool results - wait for actual results")
         
         return lines.joined(separator: "\n")
     }
@@ -378,11 +393,32 @@ final class MCPToolRegistry: ObservableObject {
 // MARK: - Tool Call Parsing
 
 extension MCPToolRegistry {
-    /// Regex pattern to match tool calls in assistant responses
+    /// Regex pattern to match tool calls in JSON format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
     static let toolCallPattern = #"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>"#
     
-    /// Parse tool calls from assistant message
+    /// Alternative XML format: <execute><invoke name="..."><parameter name="...">value</parameter></invoke></execute>
+    static let alternativeXMLPattern = #"<(?:execute|tool)>\s*<invoke\s+name="([^"]+)">([\s\S]*?)</invoke>\s*</(?:execute|tool)>"#
+    
+    /// Parameter pattern for alternative XML format
+    static let parameterPattern = #"<parameter\s+name="([^"]+)">([^<]*)</parameter>"#
+    
+    /// Parse tool calls from assistant message (supports multiple formats)
     static func parseToolCalls(from text: String) -> [(name: String, arguments: [String: Any]?)] {
+        var results: [(name: String, arguments: [String: Any]?)] = []
+        
+        // Try JSON format first: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+        results.append(contentsOf: parseJSONToolCalls(from: text))
+        
+        // If no JSON format found, try alternative XML format
+        if results.isEmpty {
+            results.append(contentsOf: parseXMLToolCalls(from: text))
+        }
+        
+        return results
+    }
+    
+    /// Parse JSON format tool calls
+    private static func parseJSONToolCalls(from text: String) -> [(name: String, arguments: [String: Any]?)] {
         guard let regex = try? NSRegularExpression(pattern: toolCallPattern, options: []) else {
             return []
         }
@@ -411,13 +447,67 @@ extension MCPToolRegistry {
         return results
     }
     
-    /// Check if text contains tool calls
-    static func containsToolCalls(_ text: String) -> Bool {
-        guard let regex = try? NSRegularExpression(pattern: toolCallPattern, options: []) else {
-            return false
+    /// Parse alternative XML format tool calls: <execute><invoke name="...">...</invoke></execute>
+    private static func parseXMLToolCalls(from text: String) -> [(name: String, arguments: [String: Any]?)] {
+        guard let invokeRegex = try? NSRegularExpression(pattern: alternativeXMLPattern, options: []),
+              let paramRegex = try? NSRegularExpression(pattern: parameterPattern, options: []) else {
+            return []
         }
         
+        var results: [(name: String, arguments: [String: Any]?)] = []
         let range = NSRange(text.startIndex..., in: text)
-        return regex.firstMatch(in: text, options: [], range: range) != nil
+        
+        invokeRegex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+            guard let match = match,
+                  let nameRange = Range(match.range(at: 1), in: text),
+                  let paramsRange = Range(match.range(at: 2), in: text) else {
+                return
+            }
+            
+            let toolName = String(text[nameRange])
+            let paramsText = String(text[paramsRange])
+            
+            // Parse parameters
+            var arguments: [String: Any] = [:]
+            let paramsNSRange = NSRange(paramsText.startIndex..., in: paramsText)
+            
+            paramRegex.enumerateMatches(in: paramsText, options: [], range: paramsNSRange) { paramMatch, _, _ in
+                guard let paramMatch = paramMatch,
+                      let paramNameRange = Range(paramMatch.range(at: 1), in: paramsText),
+                      let paramValueRange = Range(paramMatch.range(at: 2), in: paramsText) else {
+                    return
+                }
+                
+                let paramName = String(paramsText[paramNameRange])
+                let paramValue = String(paramsText[paramValueRange])
+                arguments[paramName] = paramValue
+            }
+            
+            print("[MCP] Parsed XML tool call: \(toolName) with arguments: \(arguments)")
+            results.append((name: toolName, arguments: arguments.isEmpty ? nil : arguments))
+        }
+        
+        return results
+    }
+    
+    /// Check if text contains tool calls (any format)
+    static func containsToolCalls(_ text: String) -> Bool {
+        // Check JSON format
+        if let regex = try? NSRegularExpression(pattern: toolCallPattern, options: []) {
+            let range = NSRange(text.startIndex..., in: text)
+            if regex.firstMatch(in: text, options: [], range: range) != nil {
+                return true
+            }
+        }
+        
+        // Check XML format
+        if let regex = try? NSRegularExpression(pattern: alternativeXMLPattern, options: []) {
+            let range = NSRange(text.startIndex..., in: text)
+            if regex.firstMatch(in: text, options: [], range: range) != nil {
+                return true
+            }
+        }
+        
+        return false
     }
 }

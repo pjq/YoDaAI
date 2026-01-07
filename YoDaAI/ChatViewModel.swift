@@ -599,9 +599,18 @@ final class ChatViewModel: ObservableObject {
         }
         
         let toolRegistry = MCPToolRegistry.shared
+        
+        // Debug: Log the assistant message content to see if it contains tool calls
+        print("[MCP] Checking for tool calls in response...")
+        print("[MCP] Response content (first 500 chars): \(assistantMessage.content.prefix(500))")
+        print("[MCP] Contains <tool_call>: \(assistantMessage.content.contains("<tool_call>"))")
+        
         let toolCalls = MCPToolRegistry.parseToolCalls(from: assistantMessage.content)
         
+        print("[MCP] Parsed tool calls count: \(toolCalls.count)")
+        
         guard !toolCalls.isEmpty else {
+            print("[MCP] No tool calls found, returning")
             return // No tool calls to process
         }
         
@@ -762,14 +771,25 @@ final class ChatViewModel: ObservableObject {
         return lines.joined(separator: "\n")
     }
     
-    /// Strip <tool_call>...</tool_call> XML from content
+    /// Strip tool call XML from content (supports both JSON and XML formats)
     private func stripToolCallXML(from content: String) -> String {
-        let pattern = #"<tool_call>\s*\{[\s\S]*?\}\s*</tool_call>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            return content
+        var result = content
+        
+        // Strip JSON format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+        let jsonPattern = #"<tool_call>\s*\{[\s\S]*?\}\s*</tool_call>"#
+        if let regex = try? NSRegularExpression(pattern: jsonPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
-        let range = NSRange(content.startIndex..., in: content)
-        return regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: "")
+        
+        // Strip XML format: <execute><invoke name="...">...</invoke></execute>
+        let xmlPattern = #"<(?:execute|tool)>\s*<invoke\s+name="[^"]+">[\s\S]*?</invoke>\s*</(?:execute|tool)>"#
+        if let regex = try? NSRegularExpression(pattern: xmlPattern, options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+        
+        return result
     }
     
     /// Format tool results for injection into conversation
