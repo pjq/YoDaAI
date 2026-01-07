@@ -12,12 +12,15 @@ struct ContentView: View {
 
     @Query(sort: [SortDescriptor(\LLMProvider.updatedAt, order: .reverse)])
     private var providers: [LLMProvider]
+    
+    @Query private var mcpServers: [MCPServer]
 
     @StateObject private var viewModel = ChatViewModel(
         accessibilityService: AccessibilityService(),
         permissionsStore: AppPermissionsStore()
     )
     @ObservedObject private var floatingPanelController = FloatingPanelController.shared
+    @ObservedObject private var mcpToolRegistry = MCPToolRegistry.shared
     @State private var activeThread: ChatThread?
     @State private var searchText = ""
 
@@ -106,6 +109,13 @@ struct ContentView: View {
             )
         }
         .navigationSplitViewStyle(.balanced)
+        .task {
+            // Initialize MCP connections on app start
+            if mcpToolRegistry.isMCPEnabled && !mcpServers.isEmpty {
+                print("[ContentView] Initializing MCP connections on app start...")
+                await mcpToolRegistry.refreshTools(servers: mcpServers)
+            }
+        }
         .onAppear {
             if activeThread == nil {
                 activeThread = threads.first
@@ -2941,11 +2951,11 @@ private struct MCPServersSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+        .id(toolRegistry.tools.count) // Force refresh when tools count changes
         .task {
-            // Small delay to let SwiftData query populate
-            try? await Task.sleep(for: .milliseconds(100))
-            // Auto-connect enabled servers when view appears
+            // Only refresh if tools haven't been loaded yet (fallback if app startup task hasn't run)
             if toolRegistry.isMCPEnabled && !servers.isEmpty && toolRegistry.tools.isEmpty {
+                try? await Task.sleep(for: .milliseconds(100))
                 await toolRegistry.refreshTools(servers: servers)
             }
         }

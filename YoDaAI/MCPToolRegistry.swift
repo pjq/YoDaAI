@@ -96,7 +96,8 @@ final class MCPToolRegistry: ObservableObject {
         
         let enabledServers = servers.filter { $0.isEnabled && $0.hasValidEndpoint }
         
-        var allTools: [MCPToolWithServer] = []
+        // Clear existing tools before refresh
+        tools = []
         
         for server in enabledServers {
             do {
@@ -116,18 +117,21 @@ final class MCPToolRegistry: ObservableObject {
                 )
                 
                 // Fetch tools
-                let tools = try await client.listTools()
+                let serverTools = try await client.listTools()
                 
-                // Wrap with server info
-                for tool in tools {
-                    allTools.append(MCPToolWithServer(
+                // Wrap with server info and add to tools immediately
+                let wrappedTools = serverTools.map { tool in
+                    MCPToolWithServer(
                         tool: tool,
                         serverName: server.name,
                         serverEndpoint: server.endpoint
-                    ))
+                    )
                 }
                 
-                print("[MCPToolRegistry] Fetched \(tools.count) tools from \(server.name)")
+                // Update tools array incrementally so UI updates as each server completes
+                self.tools.append(contentsOf: wrappedTools)
+                
+                print("[MCPToolRegistry] Fetched \(serverTools.count) tools from \(server.name), total now: \(self.tools.count)")
                 
             } catch {
                 print("[MCPToolRegistry] Error fetching tools from \(server.name): \(error)")
@@ -138,11 +142,10 @@ final class MCPToolRegistry: ObservableObject {
             }
         }
         
-        self.tools = allTools
         self.lastFetchTime = Date()
         self.isLoading = false
         
-        print("[MCPToolRegistry] Total tools available: \(allTools.count)")
+        print("[MCPToolRegistry] Refresh complete. Total tools available: \(self.tools.count)")
     }
     
     /// Get cached tools or refresh if needed
