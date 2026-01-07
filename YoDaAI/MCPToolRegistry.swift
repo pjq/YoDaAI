@@ -203,32 +203,126 @@ final class MCPToolRegistry: ObservableObject {
         return tools.map { $0.tool }
     }
     
-    /// Get the system prompt addition for available tools
+    /// Get the system prompt addition for available tools (includes server name prefix)
     func getToolsSystemPrompt(servers: [MCPServer]) async -> String {
-        let toolList = await getToolsForPrompt(servers: servers)
-        return toolList.formatForSystemPrompt()
+        guard isMCPEnabled else { return "" }
+        
+        // If tools are empty and not loading, trigger background refresh
+        if tools.isEmpty && !isLoading {
+            Task {
+                await refreshTools(servers: servers)
+            }
+        }
+        
+        // Format tools with server name prefix
+        return formatToolsForSystemPrompt()
+    }
+    
+    /// Format tools for system prompt with server name prefix
+    private func formatToolsForSystemPrompt() -> String {
+        guard !tools.isEmpty else { return "" }
+        
+        var lines: [String] = []
+        lines.append("You have access to the following tools from connected MCP servers:")
+        lines.append("")
+        
+        // Group tools by server for better organization
+        let toolsByServer = Dictionary(grouping: tools) { $0.serverName }
+        
+        for (serverName, serverTools) in toolsByServer.sorted(by: { $0.key < $1.key }) {
+            lines.append("## \(serverName) Tools:")
+            lines.append("")
+            
+            for toolWithServer in serverTools {
+                let tool = toolWithServer.tool
+                // Add server name prefix to tool name for clarity
+                let prefixedName = "\(serverName).\(tool.name)"
+                
+                lines.append("### \(prefixedName)")
+                if let description = tool.description {
+                    lines.append(description)
+                }
+                
+                // Format parameters using the proper struct
+                if let inputSchema = tool.inputSchema,
+                   let properties = inputSchema.properties {
+                    let required = inputSchema.required ?? []
+                    
+                    if !properties.isEmpty {
+                        lines.append("Parameters:")
+                        for (paramName, paramInfo) in properties.sorted(by: { $0.key < $1.key }) {
+                            let paramType = paramInfo.type ?? "any"
+                            let paramDesc = paramInfo.description ?? ""
+                            let isRequired = required.contains(paramName)
+                            let reqMarker = isRequired ? " (required)" : " (optional)"
+                            lines.append("  - \(paramName): \(paramType)\(reqMarker) - \(paramDesc)")
+                        }
+                    }
+                }
+                lines.append("")
+            }
+        }
+        
+        lines.append("To use a tool, respond with a tool call in this exact format:")
+        lines.append("<tool_call>")
+        lines.append("{\"name\": \"ServerName.tool_name\", \"arguments\": {\"param1\": \"value1\"}}")
+        lines.append("</tool_call>")
+        lines.append("")
+        lines.append("IMPORTANT: Always use the full tool name with server prefix (e.g., 'SplunkQuery.query_with_x_request_id_tool').")
+        lines.append("You may use multiple tool calls in a single response if needed.")
+        lines.append("After receiving tool results, incorporate them into your response to the user.")
+        
+        return lines.joined(separator: "\n")
     }
     
     // MARK: - Tool Calling
     
-    /// Call a tool by name
+    /// Call a tool by name (supports both "ServerName.tool_name" and plain "tool_name" formats)
     func callTool(name: String, arguments: [String: Any]?, servers: [MCPServer]) async throws -> String {
+        // Parse the tool name - it may be prefixed with "ServerName."
+        let (serverNameHint, actualToolName) = parseToolName(name)
+        
         // Find which server has this tool
-        guard let toolWithServer = tools.first(where: { $0.tool.name == name }) else {
+        let toolWithServer: MCPToolWithServer?
+        
+        if let serverName = serverNameHint {
+            // If server name is specified, look for the tool in that specific server
+            toolWithServer = tools.first(where: { 
+                $0.serverName == serverName && $0.tool.name == actualToolName 
+            })
+        } else {
+            // Otherwise, search all servers for the tool
+            toolWithServer = tools.first(where: { $0.tool.name == actualToolName })
+        }
+        
+        guard let foundTool = toolWithServer else {
             throw MCPClientError.serverNotAvailable
         }
         
-        guard let client = clients[toolWithServer.serverEndpoint] else {
+        guard let client = clients[foundTool.serverEndpoint] else {
             throw MCPClientError.notInitialized
         }
         
-        let result = try await client.callTool(name: name, arguments: arguments)
+        // Call the tool using the actual (non-prefixed) name
+        let result = try await client.callTool(name: actualToolName, arguments: arguments)
         
         if result.hasError {
             return "Tool error: \(result.textContent ?? "Unknown error")"
         }
         
         return result.textContent ?? ""
+    }
+    
+    /// Parse a tool name that may be prefixed with "ServerName."
+    /// Returns (serverName, toolName) where serverName is nil if no prefix
+    private func parseToolName(_ fullName: String) -> (serverName: String?, toolName: String) {
+        // Check if the name contains a dot (server prefix)
+        if let dotIndex = fullName.firstIndex(of: ".") {
+            let serverName = String(fullName[..<dotIndex])
+            let toolName = String(fullName[fullName.index(after: dotIndex)...])
+            return (serverName, toolName)
+        }
+        return (nil, fullName)
     }
     
     // MARK: - Connection Testing
