@@ -607,10 +607,24 @@ final class ChatViewModel: ObservableObject {
         
         print("[MCP] Found \(toolCalls.count) tool call(s) in response")
         
-        // Execute each tool call and collect results
+        // Store original content (with tool call XML)
+        let originalContent = assistantMessage.content
+        
+        // Execute each tool call and collect results, showing progress to user
         var toolResults: [(name: String, result: String)] = []
         
-        for (name, arguments) in toolCalls {
+        for (index, (name, arguments)) in toolCalls.enumerated() {
+            // Update message to show tool execution progress
+            let progressText = formatToolExecutionProgress(
+                originalContent: originalContent,
+                currentTool: name,
+                toolIndex: index + 1,
+                totalTools: toolCalls.count,
+                completedResults: toolResults
+            )
+            assistantMessage.content = progressText
+            try context.save()
+            
             print("[MCP] Executing tool: \(name)")
             do {
                 let result = try await toolRegistry.callTool(name: name, arguments: arguments, servers: mcpServers)
@@ -623,14 +637,22 @@ final class ChatViewModel: ObservableObject {
             }
         }
         
-        // Format tool results as a system message
+        // Show all tool results before getting follow-up response
+        let completedText = formatToolExecutionComplete(
+            originalContent: originalContent,
+            results: toolResults
+        )
+        assistantMessage.content = completedText
+        try context.save()
+        
+        // Format tool results as a system message for the AI
         let toolResultsContent = formatToolResults(toolResults)
         
         // Build updated message history including the tool results
         var updatedMessages = requestMessages
         
         // Add the assistant's response (with tool calls)
-        updatedMessages.append(OpenAIChatMessage(role: "assistant", content: assistantMessage.content))
+        updatedMessages.append(OpenAIChatMessage(role: "assistant", content: originalContent))
         
         // Add tool results as a system message
         updatedMessages.append(OpenAIChatMessage(role: "system", content: toolResultsContent))
@@ -670,6 +692,84 @@ final class ChatViewModel: ObservableObject {
             in: context,
             depth: depth + 1
         )
+    }
+    
+    /// Format progress text while tools are executing
+    private func formatToolExecutionProgress(
+        originalContent: String,
+        currentTool: String,
+        toolIndex: Int,
+        totalTools: Int,
+        completedResults: [(name: String, result: String)]
+    ) -> String {
+        var lines: [String] = []
+        
+        // Strip tool_call XML from original content for display
+        let cleanContent = stripToolCallXML(from: originalContent)
+        if !cleanContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append(cleanContent.trimmingCharacters(in: .whitespacesAndNewlines))
+            lines.append("")
+        }
+        
+        lines.append("---")
+        lines.append("**🔧 Executing Tools (\(toolIndex)/\(totalTools))**")
+        lines.append("")
+        
+        // Show completed results
+        for (name, result) in completedResults {
+            lines.append("✅ **\(name)**")
+            let truncatedResult = result.count > 200 ? String(result.prefix(200)) + "..." : result
+            lines.append("```")
+            lines.append(truncatedResult)
+            lines.append("```")
+            lines.append("")
+        }
+        
+        // Show current tool being executed
+        lines.append("⏳ **\(currentTool)** - executing...")
+        
+        return lines.joined(separator: "\n")
+    }
+    
+    /// Format final text after all tools complete
+    private func formatToolExecutionComplete(
+        originalContent: String,
+        results: [(name: String, result: String)]
+    ) -> String {
+        var lines: [String] = []
+        
+        // Strip tool_call XML from original content for display
+        let cleanContent = stripToolCallXML(from: originalContent)
+        if !cleanContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append(cleanContent.trimmingCharacters(in: .whitespacesAndNewlines))
+            lines.append("")
+        }
+        
+        lines.append("---")
+        lines.append("**🔧 Tool Results:**")
+        lines.append("")
+        
+        for (name, result) in results {
+            lines.append("✅ **\(name)**")
+            // Show more of the result in final view
+            let truncatedResult = result.count > 500 ? String(result.prefix(500)) + "...(truncated)" : result
+            lines.append("```")
+            lines.append(truncatedResult)
+            lines.append("```")
+            lines.append("")
+        }
+        
+        return lines.joined(separator: "\n")
+    }
+    
+    /// Strip <tool_call>...</tool_call> XML from content
+    private func stripToolCallXML(from content: String) -> String {
+        let pattern = #"<tool_call>\s*\{[\s\S]*?\}\s*</tool_call>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return content
+        }
+        let range = NSRange(content.startIndex..., in: content)
+        return regex.stringByReplacingMatches(in: content, options: [], range: range, withTemplate: "")
     }
     
     /// Format tool results for injection into conversation
