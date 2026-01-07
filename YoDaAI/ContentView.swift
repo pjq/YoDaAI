@@ -2876,7 +2876,274 @@ private struct MCPServersSettingsTab: View {
     
     @ObservedObject private var toolRegistry = MCPToolRegistry.shared
     
-    @State private var selectedServerID: MCPServer.ID?
+    @State private var editingServer: MCPServer?
+    @State private var showingAddSheet: Bool = false
+    
+    var body: some View {
+        Form {
+            // MCP Enable Toggle Section
+            Section {
+                Toggle("Enable MCP Tools", isOn: $toolRegistry.isMCPEnabled)
+                    .onChange(of: toolRegistry.isMCPEnabled) { _, newValue in
+                        if newValue {
+                            // Auto-connect all enabled servers when MCP is enabled
+                            Task { await toolRegistry.refreshTools(servers: servers) }
+                        }
+                    }
+            } footer: {
+                Text("When enabled, tools from MCP servers are available to the AI assistant")
+            }
+            
+            // Servers List Section
+            Section {
+                if servers.isEmpty {
+                    ContentUnavailableView {
+                        Label("No MCP Servers", systemImage: "server.rack")
+                    } description: {
+                        Text("Add an MCP server to extend AI capabilities with external tools")
+                    } actions: {
+                        Button("Add Server") {
+                            showingAddSheet = true
+                        }
+                    }
+                } else {
+                    ForEach(servers) { server in
+                        MCPServerRowView(
+                            server: server,
+                            toolRegistry: toolRegistry,
+                            onEdit: { editingServer = server }
+                        )
+                    }
+                    .onDelete(perform: deleteServers)
+                }
+            } header: {
+                HStack {
+                    Text("MCP Servers")
+                    Spacer()
+                    if !servers.isEmpty {
+                        Button {
+                            showingAddSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+            
+            // Tools Summary Section (when enabled and has tools)
+            if toolRegistry.isMCPEnabled && !toolRegistry.tools.isEmpty {
+                Section("Available Tools (\(toolRegistry.tools.count))") {
+                    ForEach(toolRegistry.tools) { toolWithServer in
+                        MCPToolRowView(toolWithServer: toolWithServer)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            // Auto-connect enabled servers on appear
+            if toolRegistry.isMCPEnabled {
+                Task { await toolRegistry.refreshTools(servers: servers) }
+            }
+        }
+        .sheet(item: $editingServer) { server in
+            MCPServerDetailSheet(server: server, toolRegistry: toolRegistry)
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            MCPServerAddSheet(toolRegistry: toolRegistry)
+        }
+    }
+    
+    private func deleteServers(at offsets: IndexSet) {
+        for index in offsets {
+            let server = servers[index]
+            toolRegistry.removeClient(for: server.endpoint)
+            modelContext.delete(server)
+        }
+        try? modelContext.save()
+    }
+}
+
+// MARK: - MCP Server Row View
+
+private struct MCPServerRowView: View {
+    var server: MCPServer
+    @ObservedObject var toolRegistry: MCPToolRegistry
+    var onEdit: () -> Void
+    
+    @Environment(\.modelContext) private var modelContext
+    
+    // Tools count for this server
+    private var serverToolsCount: Int {
+        toolRegistry.tools.filter { $0.serverEndpoint == server.endpoint }.count
+    }
+    
+    private var serverStatus: MCPToolRegistry.ServerConnectionStatus {
+        toolRegistry.serverStatus[server.endpoint] ?? .unknown
+    }
+    
+    var body: some View {
+        Button(action: onEdit) {
+            HStack(spacing: 12) {
+                // Status indicator
+                statusIndicator
+                
+                // Server info
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(server.name)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        
+                        if !server.isEnabled {
+                            Text("Disabled")
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.2))
+                                .cornerRadius(4)
+                        }
+                    }
+                    
+                    // Status text and tools count
+                    HStack(spacing: 8) {
+                        statusText
+                        
+                        if serverToolsCount > 0 {
+                            Text("\(serverToolsCount) tools")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                Spacer()
+                
+                // Enable toggle (stop propagation to prevent triggering edit)
+                Toggle("", isOn: Binding(
+                    get: { server.isEnabled },
+                    set: { newValue in
+                        server.isEnabled = newValue
+                        server.updatedAt = Date()
+                        try? modelContext.save()
+                        
+                        if newValue && toolRegistry.isMCPEnabled {
+                            // Auto-connect when enabled
+                            Task {
+                                await toolRegistry.refreshTools(servers: [server])
+                            }
+                        } else if !newValue {
+                            // Disconnect when disabled
+                            toolRegistry.removeClient(for: server.endpoint)
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .onTapGesture {} // Prevent row tap
+                
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+    }
+    
+    @ViewBuilder
+    private var statusIndicator: some View {
+        switch serverStatus {
+        case .unknown:
+            Circle()
+                .fill(Color.gray.opacity(0.5))
+                .frame(width: 10, height: 10)
+        case .connecting:
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: 10, height: 10)
+        case .connected:
+            Circle()
+                .fill(Color.green)
+                .frame(width: 10, height: 10)
+        case .error:
+            Circle()
+                .fill(Color.red)
+                .frame(width: 10, height: 10)
+        }
+    }
+    
+    @ViewBuilder
+    private var statusText: some View {
+        switch serverStatus {
+        case .unknown:
+            Text("Not connected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .connecting:
+            Text("Connecting...")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .connected(let name, let version):
+            if let name = name {
+                Text("\(name)\(version.map { " v\($0)" } ?? "")")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                Text("Connected")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+        case .error(let message):
+            Text("Error")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .help(message)
+        }
+    }
+}
+
+// MARK: - MCP Tool Row View
+
+private struct MCPToolRowView: View {
+    let toolWithServer: MCPToolWithServer
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(toolWithServer.tool.name)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Spacer()
+                Text(toolWithServer.serverName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(4)
+            }
+            if let description = toolWithServer.tool.description {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - MCP Server Detail Sheet
+
+private struct MCPServerDetailSheet: View {
+    var server: MCPServer
+    @ObservedObject var toolRegistry: MCPToolRegistry
+    
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    
     @State private var draftName: String = ""
     @State private var draftEndpoint: String = ""
     @State private var draftApiKey: String = ""
@@ -2884,70 +3151,55 @@ private struct MCPServersSettingsTab: View {
     @State private var isTestingConnection: Bool = false
     @State private var connectionTestResult: String?
     @State private var connectionTestSuccess: Bool = false
+    @State private var showDeleteConfirmation: Bool = false
     
-    private var selectedServer: MCPServer? {
-        servers.first(where: { $0.id == selectedServerID })
+    private var hasUnsavedChanges: Bool {
+        server.name != draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+            || server.endpoint != draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            || server.apiKey != draftApiKey
+            || server.transport != draftTransport
+    }
+    
+    private var serverStatus: MCPToolRegistry.ServerConnectionStatus {
+        toolRegistry.serverStatus[server.endpoint] ?? .unknown
+    }
+    
+    private var serverTools: [MCPToolWithServer] {
+        toolRegistry.tools.filter { $0.serverEndpoint == server.endpoint }
     }
     
     var body: some View {
-        Form {
-            Section("MCP Integration") {
-                Toggle("Enable MCP Tools", isOn: $toolRegistry.isMCPEnabled)
-                Text("When enabled, tools from MCP servers are injected into your system prompt")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                
-                if toolRegistry.isMCPEnabled {
+        NavigationStack {
+            Form {
+                // Connection Status Section
+                Section("Connection Status") {
                     HStack {
-                        Text("Available tools")
+                        statusIndicator
+                        statusText
                         Spacer()
-                        if toolRegistry.isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("\(toolRegistry.tools.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    
-                    Button("Refresh Tools") {
-                        Task {
-                            await toolRegistry.refreshTools(servers: servers)
-                        }
-                    }
-                    .disabled(toolRegistry.isLoading)
-                }
-            }
-            
-            Section("MCP Servers") {
-                Picker("Server", selection: $selectedServerID) {
-                    ForEach(servers) { server in
-                        HStack {
-                            Text(server.name)
-                            if !server.isEnabled {
-                                Text("(disabled)")
-                                    .foregroundStyle(.secondary)
+                        
+                        if case .error = serverStatus {
+                            Button("Retry") {
+                                reconnect()
                             }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        } else if case .connected = serverStatus {
+                            Button("Refresh") {
+                                reconnect()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .tag(Optional(server.id))
                     }
                 }
                 
-                if let server = selectedServer {
-                    // Server status indicator
-                    HStack {
-                        Text("Status")
-                        Spacer()
-                        serverStatusView(for: server.endpoint)
-                    }
-                    
-                    TextField("Server name", text: $draftName)
+                // Server Configuration Section
+                Section("Server Configuration") {
+                    TextField("Name", text: $draftName)
                     
                     TextField("Endpoint URL", text: $draftEndpoint)
-                        .textFieldStyle(.roundedBorder)
-                    Text("e.g., https://mcp.example.com/mcp")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .textContentType(.URL)
                     
                     Picker("Transport", selection: $draftTransport) {
                         ForEach(MCPTransport.allCases) { transport in
@@ -2955,20 +3207,11 @@ private struct MCPServersSettingsTab: View {
                         }
                     }
                     
-                    SecureField("API key (optional)", text: $draftApiKey)
-                    
-                    Toggle("Enabled", isOn: Binding(
-                        get: { server.isEnabled },
-                        set: { newValue in
-                            server.isEnabled = newValue
-                            server.updatedAt = Date()
-                            try? modelContext.save()
-                            // Refresh tools when enabling/disabling
-                            Task { await toolRegistry.refreshTools(servers: servers) }
-                        }
-                    ))
-                    
-                    // Test connection button
+                    SecureField("API Key (optional)", text: $draftApiKey)
+                }
+                
+                // Test Connection Section
+                Section {
                     HStack {
                         Button("Test Connection") {
                             testConnection()
@@ -2978,7 +3221,10 @@ private struct MCPServersSettingsTab: View {
                         if isTestingConnection {
                             ProgressView()
                                 .controlSize(.small)
+                                .padding(.leading, 8)
                         }
+                        
+                        Spacer()
                         
                         if let result = connectionTestResult {
                             Text(result)
@@ -2986,146 +3232,116 @@ private struct MCPServersSettingsTab: View {
                                 .foregroundStyle(connectionTestSuccess ? .green : .red)
                         }
                     }
-                    
-                    // Save button
-                    HStack {
-                        Spacer()
-                        Button("Save Server") {
-                            saveSelectedServer()
+                }
+                
+                // Available Tools Section
+                if !serverTools.isEmpty {
+                    Section("Available Tools (\(serverTools.count))") {
+                        ForEach(serverTools) { toolWithServer in
+                            MCPToolRowView(toolWithServer: toolWithServer)
                         }
-                        .disabled(!hasUnsavedChanges)
+                    }
+                }
+                
+                // Danger Zone
+                Section {
+                    Button("Delete Server", role: .destructive) {
+                        showDeleteConfirmation = true
                     }
                 }
             }
-            
-            Section("Manage Servers") {
-                HStack {
-                    Button("Add Server") {
-                        addServer()
+            .formStyle(.grouped)
+            .navigationTitle("Edit Server")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
                     }
-                    Spacer()
-                    Button("Delete", role: .destructive) {
-                        deleteSelectedServer()
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveServer()
+                        dismiss()
                     }
-                    .disabled(selectedServer == nil)
+                    .disabled(!hasUnsavedChanges)
                 }
             }
-            
-            // Available tools list
-            if toolRegistry.isMCPEnabled && !toolRegistry.tools.isEmpty {
-                Section("Available Tools (\(toolRegistry.tools.count))") {
-                    ForEach(toolRegistry.tools) { toolWithServer in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(toolWithServer.tool.name)
-                                    .font(.headline)
-                                Spacer()
-                                Text(toolWithServer.serverName)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let description = toolWithServer.tool.description {
-                                Text(description)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
+            .onAppear {
+                loadDrafts()
+            }
+            .confirmationDialog("Delete Server?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    deleteServer()
+                    dismiss()
                 }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will remove the server and disconnect all its tools.")
             }
         }
-        .formStyle(.grouped)
-        .onAppear {
-            selectInitialServerIfNeeded()
-        }
-        .onChange(of: selectedServerID) {
-            loadSelectedServerDrafts()
-            connectionTestResult = nil
+        .frame(minWidth: 450, minHeight: 500)
+    }
+    
+    @ViewBuilder
+    private var statusIndicator: some View {
+        switch serverStatus {
+        case .unknown:
+            Circle()
+                .fill(Color.gray.opacity(0.5))
+                .frame(width: 12, height: 12)
+        case .connecting:
+            ProgressView()
+                .controlSize(.small)
+        case .connected:
+            Circle()
+                .fill(Color.green)
+                .frame(width: 12, height: 12)
+        case .error:
+            Circle()
+                .fill(Color.red)
+                .frame(width: 12, height: 12)
         }
     }
     
-    // MARK: - Server Status View
-    
     @ViewBuilder
-    private func serverStatusView(for endpoint: String) -> some View {
-        switch toolRegistry.serverStatus[endpoint] {
-        case .unknown, .none:
-            HStack(spacing: 4) {
-                Circle().fill(Color.gray).frame(width: 8, height: 8)
-                Text("Not tested")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+    private var statusText: some View {
+        switch serverStatus {
+        case .unknown:
+            Text("Not connected")
+                .foregroundStyle(.secondary)
         case .connecting:
-            HStack(spacing: 4) {
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Connecting...")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("Connecting...")
+                .foregroundStyle(.orange)
         case .connected(let name, let version):
-            HStack(spacing: 4) {
-                Circle().fill(Color.green).frame(width: 8, height: 8)
+            VStack(alignment: .leading) {
                 Text("Connected")
-                    .font(.caption)
                     .foregroundStyle(.green)
                 if let name = name {
-                    Text("(\(name)\(version.map { " v\($0)" } ?? ""))")
+                    Text("\(name)\(version.map { " v\($0)" } ?? "")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         case .error(let message):
-            HStack(spacing: 4) {
-                Circle().fill(Color.red).frame(width: 8, height: 8)
-                Text("Error")
-                    .font(.caption)
+            VStack(alignment: .leading) {
+                Text("Connection Error")
                     .foregroundStyle(.red)
-                    .help(message)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
         }
     }
     
-    // MARK: - Computed Properties
-    
-    private var hasUnsavedChanges: Bool {
-        guard let server = selectedServer else { return false }
-        return server.name != draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-            || server.endpoint != draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-            || server.apiKey != draftApiKey
-            || server.transport != draftTransport
-    }
-    
-    // MARK: - Methods
-    
-    private func selectInitialServerIfNeeded() {
-        if selectedServerID == nil {
-            selectedServerID = servers.first?.id
-        }
-        loadSelectedServerDrafts()
-    }
-    
-    private func loadSelectedServerDrafts() {
-        guard let server = selectedServer else {
-            draftName = ""
-            draftEndpoint = ""
-            draftApiKey = ""
-            draftTransport = .httpStreamable
-            return
-        }
-        
+    private func loadDrafts() {
         draftName = server.name
         draftEndpoint = server.endpoint
         draftApiKey = server.apiKey
         draftTransport = server.transport
     }
     
-    private func saveSelectedServer() {
-        guard let server = selectedServer else { return }
-        
+    private func saveServer() {
         server.name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         server.endpoint = draftEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         server.apiKey = draftApiKey
@@ -3134,44 +3350,171 @@ private struct MCPServersSettingsTab: View {
         
         try? modelContext.save()
         
-        // Refresh tools after save
-        Task { await toolRegistry.refreshTools(servers: servers) }
+        // Reconnect if enabled
+        if server.isEnabled && toolRegistry.isMCPEnabled {
+            Task { await toolRegistry.refreshTools(servers: [server]) }
+        }
     }
     
-    private func addServer() {
-        let server = MCPServer(
-            name: "New MCP Server",
-            endpoint: "https://",
-            transport: .httpStreamable
-        )
-        modelContext.insert(server)
-        try? modelContext.save()
-        
-        selectedServerID = server.id
-    }
-    
-    private func deleteSelectedServer() {
-        guard let server = selectedServer else { return }
-        
-        let deletedEndpoint = server.endpoint
+    private func deleteServer() {
+        toolRegistry.removeClient(for: server.endpoint)
         modelContext.delete(server)
         try? modelContext.save()
-        
-        // Remove from registry
-        toolRegistry.removeClient(for: deletedEndpoint)
-        
-        selectedServerID = servers.first?.id
+    }
+    
+    private func reconnect() {
+        guard server.isEnabled && toolRegistry.isMCPEnabled else { return }
+        Task { await toolRegistry.refreshTools(servers: [server]) }
     }
     
     private func testConnection() {
-        guard selectedServer != nil else { return }
-        
-        // Save current drafts to a temporary server for testing
         let testServer = MCPServer(
             name: draftName,
             endpoint: draftEndpoint,
             transport: draftTransport,
             apiKey: draftApiKey
+        )
+        
+        isTestingConnection = true
+        connectionTestResult = nil
+        
+        Task {
+            do {
+                let result = try await toolRegistry.testConnection(server: testServer)
+                await MainActor.run {
+                    connectionTestSuccess = true
+                    if let name = result.serverName {
+                        connectionTestResult = "Connected to \(name)"
+                    } else {
+                        connectionTestResult = "Connected successfully"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    connectionTestSuccess = false
+                    connectionTestResult = error.localizedDescription
+                }
+            }
+            
+            await MainActor.run {
+                isTestingConnection = false
+            }
+        }
+    }
+}
+
+// MARK: - MCP Server Add Sheet
+
+private struct MCPServerAddSheet: View {
+    @ObservedObject var toolRegistry: MCPToolRegistry
+    
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var name: String = ""
+    @State private var endpoint: String = "https://"
+    @State private var apiKey: String = ""
+    @State private var transport: MCPTransport = .sse
+    @State private var isEnabled: Bool = true
+    @State private var isTestingConnection: Bool = false
+    @State private var connectionTestResult: String?
+    @State private var connectionTestSuccess: Bool = false
+    
+    private var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && endpoint.hasPrefix("http")
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Server Configuration") {
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    TextField("Endpoint URL", text: $endpoint)
+                        .textContentType(.URL)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    Picker("Transport", selection: $transport) {
+                        ForEach(MCPTransport.allCases) { transport in
+                            Text(transport.displayName).tag(transport)
+                        }
+                    }
+                    
+                    SecureField("API Key (optional)", text: $apiKey)
+                    
+                    Toggle("Enable after adding", isOn: $isEnabled)
+                }
+                
+                Section {
+                    HStack {
+                        Button("Test Connection") {
+                            testConnection()
+                        }
+                        .disabled(isTestingConnection || !isValid)
+                        
+                        if isTestingConnection {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(.leading, 8)
+                        }
+                        
+                        Spacer()
+                        
+                        if let result = connectionTestResult {
+                            Text(result)
+                                .font(.caption)
+                                .foregroundStyle(connectionTestSuccess ? .green : .red)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Add MCP Server")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        addServer()
+                        dismiss()
+                    }
+                    .disabled(!isValid)
+                }
+            }
+        }
+        .frame(minWidth: 400, minHeight: 350)
+    }
+    
+    private func addServer() {
+        let server = MCPServer(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+            transport: transport,
+            apiKey: apiKey
+        )
+        server.isEnabled = isEnabled
+        
+        modelContext.insert(server)
+        try? modelContext.save()
+        
+        // Auto-connect if enabled
+        if isEnabled && toolRegistry.isMCPEnabled {
+            Task { await toolRegistry.refreshTools(servers: [server]) }
+        }
+    }
+    
+    private func testConnection() {
+        let testServer = MCPServer(
+            name: name,
+            endpoint: endpoint,
+            transport: transport,
+            apiKey: apiKey
         )
         
         isTestingConnection = true
