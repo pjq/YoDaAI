@@ -332,9 +332,15 @@ actor MCPClient {
         )
         
         let encoder = JSONEncoder()
-        request.httpBody = try encoder.encode(jsonRPCRequest)
+        encoder.outputFormatting = .sortedKeys // For consistent output
+        let requestBody = try encoder.encode(jsonRPCRequest)
+        request.httpBody = requestBody
         
-        print("[MCPClient] Sending request to \(url): \(method)")
+        // Debug: log request
+        if let requestStr = String(data: requestBody, encoding: .utf8) {
+            print("[MCPClient] Sending request to \(url): \(method)")
+            print("[MCPClient] Request body: \(requestStr)")
+        }
         
         do {
             let (data, response) = try await session.data(for: request)
@@ -345,15 +351,15 @@ actor MCPClient {
             
             print("[MCPClient] Response status: \(httpResponse.statusCode)")
             
+            // Always log response body for debugging
+            if let responseStr = String(data: data, encoding: .utf8) {
+                print("[MCPClient] Response body: \(responseStr.prefix(1000))")
+            }
+            
             // Check HTTP status
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: data, encoding: .utf8)
                 throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: message)
-            }
-            
-            // Debug: print response
-            if let responseStr = String(data: data, encoding: .utf8) {
-                print("[MCPClient] Response: \(responseStr.prefix(500))")
             }
             
             // Parse JSON-RPC response
