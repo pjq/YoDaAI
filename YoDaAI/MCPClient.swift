@@ -181,31 +181,46 @@ actor MCPClient {
                     try Task.checkCancellation()
                     
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    print("[MCPClient] SSE line: \(trimmed)")
+                    print("[MCPClient] SSE line: '\(trimmed)'")
                     
-                    if trimmed.isEmpty {
-                        // Empty line means end of event
-                        if currentEvent == "endpoint", let data = currentData {
-                            // Parse the endpoint URL
-                            let endpointPath = data.trimmingCharacters(in: .whitespacesAndNewlines)
-                            
-                            // Build full URL from relative or absolute path
-                            if let endpointURL = URL(string: endpointPath, relativeTo: url)?.absoluteURL {
-                                print("[MCPClient] SSE endpoint received: \(endpointURL)")
-                                return endpointURL
-                            } else if let endpointURL = URL(string: endpointPath) {
-                                print("[MCPClient] SSE endpoint received: \(endpointURL)")
-                                return endpointURL
-                            }
-                        }
-                        currentEvent = nil
-                        currentData = nil
-                    } else if trimmed.hasPrefix("event:") {
+                    if trimmed.hasPrefix("event:") {
                         currentEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
                         print("[MCPClient] SSE event type: \(currentEvent ?? "nil")")
                     } else if trimmed.hasPrefix("data:") {
                         currentData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
                         print("[MCPClient] SSE data: \(currentData ?? "nil")")
+                        
+                        // Process immediately when we have endpoint event and data
+                        // Don't wait for empty line - some servers don't send it
+                        if currentEvent == "endpoint", let data = currentData, !data.isEmpty {
+                            let endpointPath = data.trimmingCharacters(in: .whitespacesAndNewlines)
+                            
+                            // Build full URL - handle relative paths
+                            let endpointURL: URL?
+                            if endpointPath.hasPrefix("http://") || endpointPath.hasPrefix("https://") {
+                                // Absolute URL
+                                endpointURL = URL(string: endpointPath)
+                            } else {
+                                // Relative path - combine with base URL
+                                var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
+                                
+                                // Parse the path and query from endpointPath
+                                if let pathURL = URL(string: endpointPath, relativeTo: url) {
+                                    components?.path = pathURL.path
+                                    components?.query = pathURL.query
+                                }
+                                endpointURL = components?.url
+                            }
+                            
+                            if let finalURL = endpointURL {
+                                print("[MCPClient] SSE endpoint received: \(finalURL)")
+                                return finalURL
+                            }
+                        }
+                    } else if trimmed.isEmpty {
+                        // Empty line - reset state for next event
+                        currentEvent = nil
+                        currentData = nil
                     }
                 }
                 
