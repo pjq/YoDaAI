@@ -140,5 +140,126 @@ struct YoDaAIApp: App {
                 Text("Text Size: \(scaleManager.scalePercentage)%")
             }
         }
+        
+        // Settings window (Cmd+,)
+        Settings {
+            AppSettingsView()
+                .environmentObject(settingsRouter)
+        }
+        .modelContainer(sharedModelContainer)
+    }
+}
+
+// MARK: - App Settings View (for Settings scene)
+struct AppSettingsView: View {
+    @EnvironmentObject private var settingsRouter: SettingsRouter
+    @StateObject private var viewModel = ChatViewModel(
+        accessibilityService: AccessibilityService(),
+        permissionsStore: AppPermissionsStore()
+    )
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Custom tab bar
+            SettingsTabBar(selectedTab: $settingsRouter.selectedTab)
+            
+            Divider()
+            
+            // Tab content
+            Group {
+                switch settingsRouter.selectedTab {
+                case .general:
+                    GeneralSettingsContent(viewModel: viewModel)
+                case .apiKeys:
+                    APIKeysSettingsContent()
+                case .mcpServers:
+                    MCPServersSettingsContent()
+                case .permissions:
+                    PermissionsSettingsContent()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: 650, height: 500)
+    }
+}
+
+// MARK: - Custom Settings Tab Bar
+struct SettingsTabBar: View {
+    @Binding var selectedTab: SettingsRouter.SettingsTab
+    
+    var body: some View {
+        HStack(spacing: 24) {
+            SettingsTabButton(
+                tab: .general,
+                selectedTab: $selectedTab,
+                icon: "gear",
+                title: "General"
+            )
+            
+            SettingsTabButton(
+                tab: .apiKeys,
+                selectedTab: $selectedTab,
+                icon: "key",
+                title: "API Keys"
+            )
+            
+            SettingsTabButton(
+                tab: .mcpServers,
+                selectedTab: $selectedTab,
+                icon: "server.rack",
+                title: "MCP Servers"
+            )
+            
+            SettingsTabButton(
+                tab: .permissions,
+                selectedTab: $selectedTab,
+                icon: "lock.shield",
+                title: "Permissions"
+            )
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 20)
+    }
+}
+
+// MARK: - Settings Tab Button
+struct SettingsTabButton: View {
+    let tab: SettingsRouter.SettingsTab
+    @Binding var selectedTab: SettingsRouter.SettingsTab
+    let icon: String
+    let title: String
+    
+    private var isSelected: Bool {
+        selectedTab == tab
+    }
+    
+    var body: some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            VStack(spacing: 4) {
+                ZStack {
+                    if isSelected {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.15))
+                            .frame(width: 36, height: 36)
+                    }
+                    
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                }
+                .frame(width: 36, height: 36)
+                
+                Text(title)
+                    .font(.system(size: 11))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle()) // Make entire area clickable
+        }
+        .buttonStyle(.plain)
     }
 }

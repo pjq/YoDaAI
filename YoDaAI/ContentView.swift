@@ -79,6 +79,7 @@ struct ContentView: View {
             .scrollContentBackground(.hidden)
             .searchable(text: $searchText, placement: .sidebar, prompt: "Search chats")
             .navigationTitle("Chats")
+            .disabled(viewModel.isSending) // Disable chat switching during API calls
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: createNewChat) {
@@ -86,6 +87,7 @@ struct ContentView: View {
                     }
                     .help("New Chat (Cmd+N)")
                     .keyboardShortcut("n", modifiers: .command)
+                    .disabled(viewModel.isSending) // Disable new chat during API calls
                 }
             }
         } detail: {
@@ -136,46 +138,13 @@ struct ContentView: View {
                     }
                     .help(floatingPanelController.isVisible ? "Hide capture panel" : "Show capture panel")
                     
-                     // Settings button
-                     Button {
-                          settingsRouter.open(.general)
-                      } label: {
-                         Image(systemName: "gear")
-                     }
+                    // Settings button using SettingsLink
+                    SettingsLink {
+                        Image(systemName: "gear")
+                    }
                     .help("Settings")
                 }
             }
-        }
-        .sheet(isPresented: $settingsRouter.isPresented) {
-            SettingsView(
-                viewModel: viewModel,
-                selectedTab: Binding(
-                    get: {
-                        switch settingsRouter.selectedTab {
-                        case .general:
-                            return .general
-                        case .apiKeys:
-                            return .apiKeys
-                        case .mcpServers:
-                            return .mcpServers
-                        case .permissions:
-                            return .permissions
-                        }
-                    },
-                    set: { tab in
-                        switch tab {
-                        case .general:
-                            settingsRouter.selectedTab = .general
-                        case .apiKeys:
-                            settingsRouter.selectedTab = .apiKeys
-                        case .mcpServers:
-                            settingsRouter.selectedTab = .mcpServers
-                        case .permissions:
-                            settingsRouter.selectedTab = .permissions
-                        }
-                    }
-                )
-            )
         }
 
     }
@@ -2123,59 +2092,8 @@ private struct ModelPickerPopover: View {
     }
 }
 
-// MARK: - Settings View
-struct SettingsView: View {
-    enum Tab: Hashable {
-        case general
-        case apiKeys
-        case mcpServers
-        case permissions
-    }
-
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var viewModel: ChatViewModel
-    @Binding var selectedTab: Tab
-
-    var body: some View {
-        TabView(selection: $selectedTab) {
-            GeneralSettingsTab(viewModel: viewModel)
-                .tabItem {
-                    Label("General", systemImage: "gear")
-                }
-                .tag(Tab.general)
-
-            APIKeysSettingsTab()
-                .tabItem {
-                    Label("API Keys", systemImage: "key")
-                }
-                .tag(Tab.apiKeys)
-
-            MCPServersSettingsTab()
-                .tabItem {
-                    Label("MCP Servers", systemImage: "server.rack")
-                }
-                .tag(Tab.mcpServers)
-
-            PermissionsSettingsTab()
-                .tabItem {
-                    Label("Permissions", systemImage: "lock.shield")
-                }
-                .tag(Tab.permissions)
-        }
-        .frame(width: 550, height: 500)
-        .padding()
-        .overlay(alignment: .bottomTrailing) {
-            Button("Done") {
-                dismiss()
-            }
-            .keyboardShortcut(.defaultAction)
-            .padding()
-        }
-    }
-}
-
 // MARK: - General Settings Tab
-private struct GeneralSettingsTab: View {
+struct GeneralSettingsContent: View {
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var floatingPanelController = FloatingPanelController.shared
     @ObservedObject var cacheService = ContentCacheService.shared
@@ -2616,7 +2534,7 @@ private struct MetadataItem: View {
 }
 
 // MARK: - API Keys Settings Tab
-private struct APIKeysSettingsTab: View {
+struct APIKeysSettingsContent: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: [SortDescriptor(\LLMProvider.updatedAt, order: .reverse)])
@@ -2878,7 +2796,7 @@ private struct APIKeysSettingsTab: View {
 }
 
 // MARK: - MCP Servers Settings Tab
-private struct MCPServersSettingsTab: View {
+struct MCPServersSettingsContent: View {
     @Environment(\.modelContext) private var modelContext
     
     @Query(sort: [SortDescriptor(\MCPServer.updatedAt, order: .reverse)])
@@ -3694,7 +3612,7 @@ private struct MCPServerAddSheet: View {
 }
 
 // MARK: - Permissions Settings Tab
-private struct PermissionsSettingsTab: View {
+struct PermissionsSettingsContent: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: [SortDescriptor(\AppPermissionRule.updatedAt, order: .reverse)])
