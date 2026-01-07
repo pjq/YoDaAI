@@ -102,49 +102,70 @@ final class MCPToolRegistry: ObservableObject {
         
         let enabledServers = servers.filter { $0.isEnabled && $0.hasValidEndpoint }
         
+        print("[MCPToolRegistry] Starting refresh with \(enabledServers.count) enabled servers: \(enabledServers.map { $0.name })")
+        
         // Clear existing tools before refresh
         tools = []
         
-        for server in enabledServers {
-            do {
-                // Update status
-                serverStatus[server.endpoint] = .connecting
-                
-                // Get or create client
-                let client = getOrCreateClient(for: server)
-                
-                // Initialize if needed
-                let initResult = try await client.initialize()
-                
-                // Update status with server info
-                serverStatus[server.endpoint] = .connected(
-                    serverName: initResult.serverInfo?.name,
-                    serverVersion: initResult.serverInfo?.version
-                )
-                
-                // Fetch tools
-                let serverTools = try await client.listTools()
-                
-                // Wrap with server info and add to tools immediately
-                let wrappedTools = serverTools.map { tool in
-                    MCPToolWithServer(
-                        tool: tool,
-                        serverName: server.name,
-                        serverEndpoint: server.endpoint
-                    )
+        // Process servers in PARALLEL so slow servers don't block fast ones
+        await withTaskGroup(of: (MCPServer, Result<[MCPToolWithServer], Error>).self) { group in
+            for server in enabledServers {
+                group.addTask { [self] in
+                    do {
+                        // Update status (must be done on MainActor)
+                        await MainActor.run {
+                            self.serverStatus[server.endpoint] = .connecting
+                        }
+                        
+                        // Get or create client
+                        let client = await self.getOrCreateClient(for: server)
+                        
+                        // Initialize if needed
+                        let initResult = try await client.initialize()
+                        
+                        // Update status with server info
+                        await MainActor.run {
+                            self.serverStatus[server.endpoint] = .connected(
+                                serverName: initResult.serverInfo?.name,
+                                serverVersion: initResult.serverInfo?.version
+                            )
+                        }
+                        
+                        // Fetch tools
+                        let serverTools = try await client.listTools()
+                        
+                        // Wrap with server info
+                        let wrappedTools = serverTools.map { tool in
+                            MCPToolWithServer(
+                                tool: tool,
+                                serverName: server.name,
+                                serverEndpoint: server.endpoint
+                            )
+                        }
+                        
+                        print("[MCPToolRegistry] Fetched \(serverTools.count) tools from \(server.name)")
+                        
+                        return (server, .success(wrappedTools))
+                        
+                    } catch {
+                        print("[MCPToolRegistry] Error fetching tools from \(server.name): \(error)")
+                        
+                        await MainActor.run {
+                            self.serverStatus[server.endpoint] = .error(error.localizedDescription)
+                            self.clients.removeValue(forKey: server.endpoint)
+                        }
+                        
+                        return (server, .failure(error))
+                    }
                 }
-                
-                // Update tools array incrementally so UI updates as each server completes
-                self.tools.append(contentsOf: wrappedTools)
-                
-                print("[MCPToolRegistry] Fetched \(serverTools.count) tools from \(server.name), total now: \(self.tools.count)")
-                
-            } catch {
-                print("[MCPToolRegistry] Error fetching tools from \(server.name): \(error)")
-                serverStatus[server.endpoint] = .error(error.localizedDescription)
-                
-                // Remove failed client
-                clients.removeValue(forKey: server.endpoint)
+            }
+            
+            // Collect results as they complete and update UI incrementally
+            for await (server, result) in group {
+                if case .success(let wrappedTools) = result {
+                    self.tools.append(contentsOf: wrappedTools)
+                    print("[MCPToolRegistry] Added tools from \(server.name), total now: \(self.tools.count)")
+                }
             }
         }
         
