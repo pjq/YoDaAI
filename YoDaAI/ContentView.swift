@@ -48,7 +48,7 @@ struct ContentView: View {
                     Section("Today") {
                         ForEach(todayThreads) { thread in
                             ThreadRowView(thread: thread)
-                        .tag(thread)
+                                .tag(thread)
                                 .contextMenu {
                                     Button("Delete", role: .destructive) {
                                         deleteThread(thread)
@@ -62,7 +62,7 @@ struct ContentView: View {
                     Section("Previous") {
                         ForEach(olderThreads) { thread in
                             ThreadRowView(thread: thread)
-                        .tag(thread)
+                                .tag(thread)
                                 .contextMenu {
                                     Button("Delete", role: .destructive) {
                                         deleteThread(thread)
@@ -73,8 +73,9 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
-            .searchable(text: $searchText, placement: .sidebar)
-            .navigationTitle("YoDaAI")
+            .scrollContentBackground(.hidden)
+            .searchable(text: $searchText, placement: .sidebar, prompt: "Search chats")
+            .navigationTitle("Chats")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: createNewChat) {
@@ -161,20 +162,30 @@ private struct ThreadRowView: View {
         HStack(spacing: 10) {
             // Chat icon
             ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.accentColor.opacity(0.15))
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(0.14))
                     .frame(width: 28, height: 28)
                 Text("C")
                     .font(.system(size: 13 * scaleManager.scale, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
             }
 
-            Text(thread.title)
-                .font(.system(size: 14 * scaleManager.scale))
-                .lineLimit(1)
-                .truncationMode(.tail)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(thread.title)
+                    .font(.system(size: 13.5 * scaleManager.scale, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Text(thread.createdAt, style: .date)
+                    .font(.system(size: 11 * scaleManager.scale))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }
 
