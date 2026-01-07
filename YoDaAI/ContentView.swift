@@ -2941,10 +2941,12 @@ private struct MCPServersSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear {
-            // Auto-connect enabled servers on appear
-            if toolRegistry.isMCPEnabled {
-                Task { await toolRegistry.refreshTools(servers: servers) }
+        .task {
+            // Small delay to let SwiftData query populate
+            try? await Task.sleep(for: .milliseconds(100))
+            // Auto-connect enabled servers when view appears
+            if toolRegistry.isMCPEnabled && !servers.isEmpty && toolRegistry.tools.isEmpty {
+                await toolRegistry.refreshTools(servers: servers)
             }
         }
         .sheet(item: $editingServer) { server in
