@@ -3211,13 +3211,12 @@ private struct MCPServerDetailSheet: View {
                     
                     SecureField("API Key (optional)", text: $draftApiKey)
                     
-                    Stepper(value: $draftTimeout, in: 10...300, step: 10) {
-                        HStack {
-                            Text("Connection Timeout")
-                            Spacer()
-                            Text("\(draftTimeout)s")
-                                .foregroundStyle(.secondary)
-                        }
+                    Picker("Connection Timeout", selection: $draftTimeout) {
+                        Text("30 seconds").tag(30)
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
                     }
                 }
                 
@@ -3459,13 +3458,12 @@ private struct MCPServerAddSheet: View {
                     
                     SecureField("API Key (optional)", text: $apiKey)
                     
-                    Stepper(value: $timeout, in: 10...300, step: 10) {
-                        HStack {
-                            Text("Connection Timeout")
-                            Spacer()
-                            Text("\(timeout)s")
-                                .foregroundStyle(.secondary)
-                        }
+                    Picker("Connection Timeout", selection: $timeout) {
+                        Text("30 seconds").tag(30)
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
                     }
                     
                     Toggle("Enable after adding", isOn: $isEnabled)
