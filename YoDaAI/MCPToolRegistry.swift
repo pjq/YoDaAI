@@ -91,6 +91,12 @@ final class MCPToolRegistry: ObservableObject {
             return
         }
         
+        // Prevent concurrent refreshes
+        guard !isLoading else {
+            print("[MCPToolRegistry] Refresh already in progress, skipping...")
+            return
+        }
+        
         isLoading = true
         lastError = nil
         
@@ -152,16 +158,27 @@ final class MCPToolRegistry: ObservableObject {
     func getToolsForPrompt(servers: [MCPServer]) async -> [MCPTool] {
         guard isMCPEnabled else { return [] }
         
-        // Check cache validity
+        // Check cache validity - if cache is still valid, use it
         if let lastFetch = lastFetchTime,
            Date().timeIntervalSince(lastFetch) < cacheExpirationSeconds,
            !tools.isEmpty {
             return tools.map { $0.tool }
         }
         
-        // Refresh
-        await refreshTools(servers: servers)
+        // If no cache but tools are being loaded, just return what we have
+        // Don't block waiting for slow servers
+        if isLoading {
+            return tools.map { $0.tool }
+        }
         
+        // If no tools and not loading, trigger a background refresh but don't wait
+        if tools.isEmpty {
+            Task {
+                await refreshTools(servers: servers)
+            }
+        }
+        
+        // Return whatever tools we currently have (may be empty on first call)
         return tools.map { $0.tool }
     }
     
