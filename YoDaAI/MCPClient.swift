@@ -20,6 +20,8 @@ enum MCPClientError: Error, LocalizedError {
     case notInitialized
     case timeout
     case serverNotAvailable
+    case sseEndpointNotReceived
+    case sseParseError(String)
     
     var errorDescription: String? {
         switch self {
@@ -44,6 +46,10 @@ enum MCPClientError: Error, LocalizedError {
             return "MCP request timed out"
         case .serverNotAvailable:
             return "MCP server is not available"
+        case .sseEndpointNotReceived:
+            return "SSE endpoint URL not received from server"
+        case .sseParseError(let detail):
+            return "SSE parse error: \(detail)"
         }
     }
 }
@@ -59,6 +65,15 @@ actor MCPClient {
     private var serverInfo: MCPServerInfo?
     private var requestId: Int = 0
     
+    /// SSE-specific: the POST endpoint URL received from SSE connection
+    private var ssePostEndpoint: URL?
+    
+    /// SSE-specific: pending responses keyed by request ID
+    private var pendingResponses: [Int: CheckedContinuation<Data, Error>] = [:]
+    
+    /// SSE-specific: active SSE task
+    private var sseTask: Task<Void, Never>?
+    
     /// Request timeout in seconds
     private let timeout: TimeInterval = 30
     
@@ -67,8 +82,12 @@ actor MCPClient {
         
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
+        config.timeoutIntervalForResource = 120
         self.session = URLSession(configuration: config)
+    }
+    
+    deinit {
+        sseTask?.cancel()
     }
     
     // MARK: - Request ID Management
@@ -82,6 +101,11 @@ actor MCPClient {
     
     /// Initialize the MCP connection
     func initialize() async throws -> MCPInitializeResult {
+        // For SSE transport, we need to connect to SSE first
+        if server.transport == .sse {
+            try await connectSSE()
+        }
+        
         let params = MCPInitializeParams.default()
         
         let result: MCPInitializeResult = try await sendRequest(
@@ -104,6 +128,75 @@ actor MCPClient {
         try await sendNotification(method: "notifications/initialized", params: nil)
         
         return result
+    }
+    
+    // MARK: - SSE Connection
+    
+    /// Connect to SSE endpoint and get the POST endpoint URL
+    private func connectSSE() async throws {
+        guard let url = server.endpointURL else {
+            throw MCPClientError.invalidURL
+        }
+        
+        print("[MCPClient] Connecting to SSE endpoint: \(url)")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = timeout
+        
+        // Add custom headers
+        for (key, value) in server.buildHeaders() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        
+        // Make the request and parse SSE events to get the endpoint
+        let (bytes, response) = try await session.bytes(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MCPClientError.invalidResponse
+        }
+        
+        print("[MCPClient] SSE connection status: \(httpResponse.statusCode)")
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: "Failed to connect to SSE endpoint")
+        }
+        
+        // Parse SSE stream to find the endpoint event
+        var currentEvent: String?
+        var currentData: String?
+        
+        for try await line in bytes.lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmed.isEmpty {
+                // Empty line means end of event
+                if currentEvent == "endpoint", let data = currentData {
+                    // Parse the endpoint URL
+                    let endpointPath = data.trimmingCharacters(in: .whitespacesAndNewlines)
+                    
+                    // Build full URL from relative or absolute path
+                    if let endpointURL = URL(string: endpointPath, relativeTo: url)?.absoluteURL {
+                        self.ssePostEndpoint = endpointURL
+                        print("[MCPClient] SSE endpoint received: \(endpointURL)")
+                        return
+                    } else if let endpointURL = URL(string: endpointPath) {
+                        self.ssePostEndpoint = endpointURL
+                        print("[MCPClient] SSE endpoint received: \(endpointURL)")
+                        return
+                    }
+                }
+                currentEvent = nil
+                currentData = nil
+            } else if trimmed.hasPrefix("event:") {
+                currentEvent = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("data:") {
+                currentData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        
+        throw MCPClientError.sseEndpointNotReceived
     }
     
     // MARK: - Tools
@@ -154,17 +247,34 @@ actor MCPClient {
     
     // MARK: - Private Methods
     
+    /// Get the URL to send requests to (different for SSE vs HTTP transport)
+    private func getRequestURL() throws -> URL {
+        if server.transport == .sse {
+            guard let sseEndpoint = ssePostEndpoint else {
+                throw MCPClientError.sseEndpointNotReceived
+            }
+            return sseEndpoint
+        } else {
+            guard let url = server.endpointURL else {
+                throw MCPClientError.invalidURL
+            }
+            return url
+        }
+    }
+    
     /// Send a JSON-RPC request and wait for response
     private func sendRequest<T: Decodable>(method: String, params: [String: AnyCodable]?) async throws -> T {
-        guard let url = server.endpointURL else {
-            throw MCPClientError.invalidURL
-        }
+        let url = try getRequestURL()
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         
         // Set headers
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        // Add custom headers from server config
         for (key, value) in server.buildHeaders() {
             request.setValue(value, forHTTPHeaderField: key)
         }
@@ -196,6 +306,11 @@ actor MCPClient {
                 throw MCPClientError.httpError(statusCode: httpResponse.statusCode, message: message)
             }
             
+            // Debug: print response
+            if let responseStr = String(data: data, encoding: .utf8) {
+                print("[MCPClient] Response: \(responseStr.prefix(500))")
+            }
+            
             // Parse JSON-RPC response
             let decoder = JSONDecoder()
             let jsonRPCResponse = try decoder.decode(JSONRPCResponse<T>.self, from: data)
@@ -213,6 +328,7 @@ actor MCPClient {
         } catch let error as MCPClientError {
             throw error
         } catch let error as DecodingError {
+            print("[MCPClient] Decoding error: \(error)")
             throw MCPClientError.decodingError(error)
         } catch {
             throw MCPClientError.connectionFailed(error)
@@ -221,15 +337,16 @@ actor MCPClient {
     
     /// Send a JSON-RPC notification (no response expected)
     private func sendNotification(method: String, params: [String: AnyCodable]?) async throws {
-        guard let url = server.endpointURL else {
-            throw MCPClientError.invalidURL
-        }
+        let url = try getRequestURL()
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         
         // Set headers
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Add custom headers from server config
         for (key, value) in server.buildHeaders() {
             request.setValue(value, forHTTPHeaderField: key)
         }
