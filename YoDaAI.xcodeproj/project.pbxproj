@@ -112,6 +112,7 @@
 			);
 			name = YoDaAI;
 			packageProductDependencies = (
+				34A024FE2F0E0001009F907B /* MCP */,
 			);
 			productName = YoDaAI;
 			productReference = 34A024D12F0D0BC5009F907B /* YoDaAI.app */;
@@ -196,6 +197,9 @@
 			mainGroup = 34A024C82F0D0BC5009F907B;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */,
+			);
 			productRefGroup = 34A024D22F0D0BC5009F907B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -625,6 +629,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		34A024FE2F0E0001009F907B /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 34A024C92F0D0BC5009F907B /* Project object */;
 }
