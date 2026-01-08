@@ -275,6 +275,32 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                     }
                     
                     let body = OpenAIChatCompletionsRequest(model: model, messages: messages, stream: true, temperature: temperature, maxTokens: maxTokens)
+
+                    // DEBUG: Log request payload to verify system messages are included
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .prettyPrinted
+                    if let jsonData = try? encoder.encode(body),
+                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                        print("[OpenAIClient] === API REQUEST PAYLOAD ===")
+                        print("[OpenAIClient] Message count: \(messages.count)")
+                        // Print roles to see if system messages are there
+                        for (index, msg) in messages.enumerated() {
+                            print("[OpenAIClient] Message \(index): role=\(msg.role)")
+                            if msg.role == "system" {
+                                // Print system message content
+                                switch msg.content {
+                                case .string(let text):
+                                    print("[OpenAIClient]   Content: \(text.prefix(200))...")
+                                case .array:
+                                    print("[OpenAIClient]   Content: multimodal array")
+                                }
+                            }
+                        }
+                        print("[OpenAIClient] Full JSON (first 2000 chars):")
+                        print(jsonString.prefix(2000))
+                        print("[OpenAIClient] =============================")
+                    }
+
                     request.httpBody = try JSONEncoder().encode(body)
                     
                     let (bytes, response) = try await self.urlSession.bytes(for: request)
