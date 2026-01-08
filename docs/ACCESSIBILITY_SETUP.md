@@ -1,12 +1,35 @@
-# Accessibility Permission Setup Guide
+# YoDaAI Permissions Setup Guide
 
-YoDaAI requires **Accessibility** permission to capture content from other apps. This is the **MVP feature** for the application.
+YoDaAI requires **TWO permissions** to capture content from other apps. This is the **MVP feature** for the application.
 
-## Why Accessibility Permission is Required
+## Quick Checklist ✅
 
-- **Content Capture**: Read text from focused fields in other apps (e.g., Safari URL bar, text editors)
+To make YoDaAI work, you need:
+
+- [ ] **Accessibility Permission** - System Settings → Privacy & Security → Accessibility → Enable YoDaAI
+- [ ] **Automation Permission** - System Settings → Privacy & Security → Automation → Enable YoDaAI for:
+  - [ ] Safari
+  - [ ] Google Chrome
+  - [ ] Notes
+  - [ ] Mail
+  - [ ] TextEdit
+  - [ ] Other apps you want to capture from
+
+⚠️ **Both permissions are REQUIRED** for content capture to work!
+
+---
+
+## Why These Permissions Are Needed
+
+### 1. Accessibility Permission (REQUIRED)
+- **Content Capture**: Read text from focused fields in other apps
 - **Window Information**: Get app names, window titles, and focused element details
 - **Text Insertion**: Insert AI responses back into apps (optional feature)
+
+### 2. Automation Permission (REQUIRED)
+- **AppleScript Control**: Control apps to extract content (Safari, Chrome, Notes, etc.)
+- **Fallback Method**: When Accessibility API doesn't work, AppleScript is used
+- **Per-App Permission**: Must be granted for each app you want to capture from
 
 ## Current Status Check
 
@@ -17,7 +40,15 @@ The app logs show:
 
 This means Accessibility permission has **NOT** been granted yet.
 
-## How to Grant Accessibility Permission
+## Setup Steps Overview
+
+**Step 1**: Grant Accessibility Permission (see below)
+**Step 2**: Grant Automation Permission for each app (see below)
+**Step 3**: Test content capture
+
+---
+
+## Part 1: Granting Accessibility Permission
 
 ### Method 1: Automatic Prompt (First Launch)
 
@@ -53,15 +84,80 @@ This means Accessibility permission has **NOT** been granted yet.
 5. This will open System Settings to the Accessibility pane
 6. Follow steps 4-7 from Method 2
 
-## Verifying Permission is Granted
+---
 
-After granting permission:
+## Part 2: Granting Automation Permission
 
+Automation permission allows YoDaAI to control other apps via AppleScript. This is required for Safari, Chrome, Notes, Mail, and other apps.
+
+### Method 1: Using YoDaAI Settings (Easiest)
+
+1. Open **YoDaAI Settings** (Cmd+, or `/settings` command)
+2. Go to the **Permissions** tab
+3. Scroll to **"Automation Permission"** section
+4. Click **"Request Permission"** for each app:
+   - Safari
+   - Google Chrome
+   - Notes
+   - Mail
+   - TextEdit
+5. A system dialog will appear for each app
+6. Click **"OK"** or **"Allow"** in each dialog
+
+### Method 2: Manual Setup
+
+1. Open **System Settings**
+2. Go to **Privacy & Security**
+3. Click **Automation** in the left sidebar
+4. Find **YoDaAI** in the list
+5. Enable toggles for the apps you want YoDaAI to control:
+   - ✅ Safari
+   - ✅ Google Chrome
+   - ✅ Notes
+   - ✅ Mail
+   - ✅ TextEdit
+
+### Understanding Automation Errors
+
+If you see these errors in the logs:
+
+```
+[ContentCacheService] AppleScript error: [-1743]
+⚠️ Error -1743: YoDaAI needs Automation permission for [AppName]
+```
+
+This means **Automation permission is NOT granted** for that specific app.
+
+**Common Error Codes:**
+- **-600**: App isn't running or not responding (not a permission issue)
+- **-1743**: Automation permission NOT granted (⚠️ **Action required**)
+- **-1728**: App doesn't support the AppleScript command (not fixable)
+
+---
+
+## Verifying Permissions Are Granted
+
+After granting **BOTH** permissions:
+
+### Accessibility Check
 1. Open YoDaAI Settings (Cmd+,)
 2. Go to **Permissions** tab
 3. Under "Accessibility Permission", you should see:
    - ✅ **Green checkmark**
    - Status: **"Granted"**
+
+### Automation Check
+1. In the same **Permissions** tab
+2. Under "Automation Permission" section
+3. Click "Request Permission" for each app
+4. If permission is already granted, you'll see:
+   - ✅ **Green checkmark** or "Granted" status
+   - No system dialog appears
+
+### System Settings Verification
+1. Open **System Settings** → **Privacy & Security**
+2. Check **Accessibility**: YoDaAI should be listed and **enabled**
+3. Check **Automation**: YoDaAI should be listed with apps **enabled**
 
 ## Testing Content Capture
 
