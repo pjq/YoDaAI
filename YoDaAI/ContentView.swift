@@ -3873,9 +3873,10 @@ private struct AutomationAppRow: View {
     let appName: String
     let bundleId: String
     let icon: String
-    
+
     @State private var status: PermissionStatus = .unknown
     @State private var isRequesting = false
+    @State private var showInfoAlert = false
     
     enum PermissionStatus {
         case unknown
@@ -3897,11 +3898,19 @@ private struct AutomationAppRow: View {
             switch status {
             case .unknown:
                 Button("Request Permission") {
-                    requestPermission()
+                    showInfoAlert = true
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(isRequesting)
+                .alert("Request Automation Permission", isPresented: $showInfoAlert) {
+                    Button("Cancel", role: .cancel) {}
+                    Button("Continue") {
+                        requestPermission()
+                    }
+                } message: {
+                    Text("YoDaAI will open \(appName) and try to control it.\n\nIf this is your FIRST time:\n• A permission dialog should appear\n• Click 'OK' or 'Allow' in the dialog\n• The dialog may appear behind other windows\n\nIf the dialog doesn't appear:\n• The permission may already be granted\n• Or you may need to check System Settings → Privacy & Security → Automation manually")
+                }
                 
             case .requesting:
                 ProgressView()
@@ -3959,29 +3968,30 @@ private struct AutomationAppRow: View {
     
     private func triggerAutomationPermission(for bundleId: String, appName: String) -> PermissionStatus {
         print("[AutomationAppRow] Running AppleScript for \(appName)...")
-        
+
         // First, try to launch the app using NSWorkspace (this doesn't require permission)
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
             print("[AutomationAppRow] Found app at: \(appURL.path)")
-            
+
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
-            
+
             let semaphore = DispatchSemaphore(value: 0)
             var launchError: Error?
-            
+
             NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, error in
                 launchError = error
                 semaphore.signal()
             }
-            
+
             semaphore.wait()
-            
+
             if let error = launchError {
                 print("[AutomationAppRow] Failed to launch \(appName): \(error)")
             } else {
                 print("[AutomationAppRow] Launched \(appName), waiting for app to start...")
-                Thread.sleep(forTimeInterval: 1.0)  // Wait for app to fully launch
+                // Wait longer for app to fully launch and be ready (especially Safari)
+                Thread.sleep(forTimeInterval: 2.0)
             }
         } else {
             print("[AutomationAppRow] App not found: \(bundleId)")
@@ -4041,14 +4051,28 @@ private struct AutomationAppRow: View {
             let errorNumber = error["NSAppleScriptErrorNumber"] as? Int ?? 0
             let errorMessage = error["NSAppleScriptErrorMessage"] as? String ?? "Unknown"
             print("[AutomationAppRow] AppleScript error for \(appName): [\(errorNumber)] \(errorMessage)")
-            
-            if errorNumber == -1743 {
+
+            switch errorNumber {
+            case -1743:
+                print("[AutomationAppRow] ⚠️ Permission DENIED or NOT YET GRANTED for \(appName)")
+                print("[AutomationAppRow] → The permission dialog should have appeared. If you missed it:")
+                print("[AutomationAppRow] → Go to: System Settings → Privacy & Security → Automation")
+                print("[AutomationAppRow] → Look for 'YoDaAI' and enable '\(appName)'")
                 return .denied
+            case -600:
+                print("[AutomationAppRow] ⚠️ Error -600: \(appName) is not responding to AppleScript")
+                print("[AutomationAppRow] → This usually means the app is still launching")
+                print("[AutomationAppRow] → Try again in a few seconds")
+                return .unknown
+            default:
+                print("[AutomationAppRow] ⚠️ Unknown AppleScript error")
+                return .unknown
             }
-            return .unknown
         }
-        
-        print("[AutomationAppRow] AppleScript succeeded for \(appName), result: \(result.stringValue ?? "nil")")
+
+        print("[AutomationAppRow] ✅ AppleScript succeeded for \(appName)!")
+        print("[AutomationAppRow] → Permission is GRANTED")
+        print("[AutomationAppRow] → Result: \(result.stringValue ?? "nil")")
         return .granted
     }
 }
