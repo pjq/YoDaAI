@@ -13,7 +13,10 @@ final class SettingsRouter: ObservableObject {
     }
 
     func open(_ tab: SettingsTab) {
-        selectedTab = tab
-        isPresented = true
+        // Defer state changes to avoid "Publishing changes during view update" errors
+        Task { @MainActor in
+            selectedTab = tab
+            isPresented = true
+        }
     }
 }

@@ -296,7 +296,9 @@ private struct ChatDetailView: View {
         // Help command - show alert with available commands
         viewModel.onHelpCommand = {
             print("[SlashCommand] Help handler called")
-            showHelpAlert = true
+            DispatchQueue.main.async {
+                showHelpAlert = true
+            }
         }
 
         // Clear command - delete all messages in current thread
@@ -327,21 +329,28 @@ private struct ChatDetailView: View {
         // New command - create new chat
         viewModel.onNewCommand = {
             print("[SlashCommand] New handler called")
-            onCreateNewChat()
+            DispatchQueue.main.async {
+                onCreateNewChat()
+            }
         }
 
         // Models command - show model picker
         viewModel.onModelsCommand = {
             print("[SlashCommand] Models handler called")
-            showModelPicker = true
+            DispatchQueue.main.async {
+                showModelPicker = true
+            }
         }
 
         // Settings command - open settings window
         viewModel.onSettingsCommand = {
             print("[SlashCommand] Settings handler called")
             // Use the existing settings router to open settings
-            onOpenAPIKeysSettings()
-            print("[SlashCommand] Settings: Triggered settings window")
+            // Need another async dispatch because settingsRouter.open() also modifies @Published properties
+            DispatchQueue.main.async {
+                onOpenAPIKeysSettings()
+                print("[SlashCommand] Settings: Triggered settings window")
+            }
         }
 
         // Copy command - copy conversation to clipboard
