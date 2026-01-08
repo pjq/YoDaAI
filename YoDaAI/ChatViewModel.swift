@@ -532,36 +532,50 @@ final class ChatViewModel: ObservableObject {
         }
 
         // Add context from @ mentioned apps - use CACHED contexts first
+        print("[ChatViewModel] Processing \(mentionedApps.count) mentioned apps, cachedContexts has \(cachedContexts.count) entries")
         for app in mentionedApps {
             // First try to use cached context from MentionChipView
             var snapshot: AppContextSnapshot?
             if let cached = cachedContexts[app.bundleIdentifier] {
                 print("[ChatViewModel] Using MentionChip cached context for \(app.appName)")
+                print("[ChatViewModel]   - Window: \(cached.windowTitle ?? "nil")")
+                print("[ChatViewModel]   - Content preview: \(cached.focusedValuePreview?.prefix(50) ?? "nil")")
                 snapshot = cached
             } else if let globalCached = ContentCacheService.shared.getCachedSnapshot(for: app.bundleIdentifier) {
                 // Try global cache from floating panel
                 print("[ChatViewModel] Using FloatingPanel cached context for \(app.appName)")
+                print("[ChatViewModel]   - Content preview: \(globalCached.focusedValuePreview?.prefix(50) ?? "nil")")
                 snapshot = globalCached
             } else {
                 // Fall back to capturing (shouldn't happen normally)
                 print("[ChatViewModel] No cached context for \(app.appName), capturing now...")
                 snapshot = await accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: true)
             }
-            
+
             if let snapshot = snapshot {
                 let rule = try permissionsStore.ensureRule(
                     for: snapshot.bundleIdentifier,
                     displayName: snapshot.appName,
                     in: context
                 )
-                
+
+                print("[ChatViewModel] Permission rule for \(app.appName): allowContext=\(rule.allowContext)")
+
                 if rule.allowContext {
                     let contextText = formatAppContext(snapshot, isMentioned: true)
+                    print("[ChatViewModel] Formatted context length: \(contextText.count) chars")
                     if !contextText.isEmpty {
-                        print("[ChatViewModel] Adding context for \(app.appName): \(contextText.prefix(100))...")
+                        print("[ChatViewModel] Adding context for \(app.appName):")
+                        print(contextText)
                         requestMessages.append(OpenAIChatMessage(role: "system", content: contextText))
+                    } else {
+                        print("[ChatViewModel] ⚠️ Context text is empty for \(app.appName)!")
                     }
+                } else {
+                    print("[ChatViewModel] ⚠️ Context NOT allowed by permission rule for \(app.appName)")
                 }
+            } else {
+                print("[ChatViewModel] ⚠️ No snapshot available for \(app.appName)")
             }
         }
 
