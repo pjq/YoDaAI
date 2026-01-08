@@ -618,6 +618,7 @@ final class ChatViewModel: ObservableObject {
         // Track if we've detected tool calls during streaming
         var detectedToolCallDuringStream = false
         var fullResponseWithToolCalls = ""
+        var chunkCount = 0  // Track chunk count for batched saves
 
         for try await chunk in stream {
             // Check for cancellation BEFORE updating UI
@@ -633,6 +634,7 @@ final class ChatViewModel: ObservableObject {
                     if let toolCallRange = combined.range(of: "<tool_call>") {
                         let contentBeforeToolCall = String(combined[..<toolCallRange.lowerBound])
                         assistantMessage.content = contentBeforeToolCall
+                        // Save before stopping UI updates
                         try context.save()
                         // Save the full combined string (includes start of tool call)
                         fullResponseWithToolCalls = combined
@@ -648,7 +650,18 @@ final class ChatViewModel: ObservableObject {
             } else {
                 // Normal streaming to UI
                 assistantMessage.content += chunk
+                chunkCount += 1
+
+                // Batch save every 20 chunks to avoid blocking UI
+                if chunkCount % 20 == 0 {
+                    try context.save()
+                }
             }
+        }
+
+        // Final save after streaming completes
+        if !detectedToolCallDuringStream {
+            try context.save()
         }
 
         // If we detected tool calls during streaming, execute them
@@ -659,7 +672,6 @@ final class ChatViewModel: ObservableObject {
 
             // Show tool execution indicator
             assistantMessage.content += "\n\n🔧 Executing tools..."
-            try context.save()
 
             print("[MCP] Full response with tool calls (first 500): \(fullResponseWithToolCalls.prefix(500))")
 
@@ -767,9 +779,8 @@ final class ChatViewModel: ObservableObject {
                 query: query
             )
 
-            // Keep the base content clean
+            // Keep the base content clean (no need to save on every iteration)
             assistantMessage.content = baseContent
-            try context.save()
 
             // Check for cancellation before each tool call
             try Task.checkCancellation()
@@ -790,7 +801,10 @@ final class ChatViewModel: ObservableObject {
 
         // Update state to processing
         toolExecutionState = .processing
-        
+
+        // Save once after all tools are executed
+        try context.save()
+
         // Check for cancellation before follow-up
         try Task.checkCancellation()
 
@@ -826,7 +840,6 @@ final class ChatViewModel: ObservableObject {
 
         // Reset message content to base + prepare for streaming the result-based response
         assistantMessage.content = baseContent + "\n\n"
-        try context.save()
 
         print("[MCP] Starting to stream follow-up response based on tool results...")
         streamingMessageID = assistantMessage.id
@@ -842,8 +855,8 @@ final class ChatViewModel: ObservableObject {
                 totalContent += chunk
                 chunkCount += 1
 
-                // Save every 10 chunks to update UI
-                if chunkCount % 10 == 0 {
+                // Batch save every 20 chunks to avoid blocking UI
+                if chunkCount % 20 == 0 {
                     try context.save()
                 }
             }
@@ -871,6 +884,8 @@ final class ChatViewModel: ObservableObject {
         }
 
         streamingMessageID = nil
+
+        // Final save to persist all changes
         try context.save()
 
         // Update tool execution state to completed with results

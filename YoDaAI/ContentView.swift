@@ -851,10 +851,11 @@ private struct AssistantMessageContentView: View {
     let content: String
     @State private var expandedToolCalls: Set<Int> = []
     @State private var expandedToolResults: Set<Int> = []
-    
+    @State private var cachedSegments: [ContentSegment]?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            let segments = parseContentSegments(content)
+            let segments = cachedSegments ?? parseContentSegments(content)
             
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 switch segment {
@@ -894,8 +895,17 @@ private struct AssistantMessageContentView: View {
                 }
             }
         }
+        .onAppear {
+            if cachedSegments == nil {
+                cachedSegments = parseContentSegments(content)
+            }
+        }
+        .onChange(of: content) { _, newContent in
+            // Re-parse when content changes (during streaming)
+            cachedSegments = parseContentSegments(newContent)
+        }
     }
-    
+
     private enum ContentSegment {
         case text(String)
         case toolCall(name: String, arguments: String?)
@@ -904,7 +914,7 @@ private struct AssistantMessageContentView: View {
     
     private func parseContentSegments(_ content: String) -> [ContentSegment] {
         var segments: [ContentSegment] = []
-        var remaining = content
+        let remaining = content
         
         // Pattern for tool calls: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
         let toolCallPattern = #"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>"#
@@ -1129,12 +1139,22 @@ private struct ImagePreviewView: View {
 private struct MarkdownTextView: View {
     let content: String
     @ObservedObject private var scaleManager = AppScaleManager.shared
-    
+    @State private var cachedBlocks: [Block]?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(parseBlocks().enumerated()), id: \.offset) { _, block in
+            ForEach(Array((cachedBlocks ?? parseBlocks()).enumerated()), id: \.offset) { _, block in
                 blockView(for: block)
             }
+        }
+        .onAppear {
+            if cachedBlocks == nil {
+                cachedBlocks = parseBlocks()
+            }
+        }
+        .onChange(of: content) { _, newContent in
+            // Re-parse when content changes (during streaming)
+            cachedBlocks = parseBlocks()
         }
     }
     
