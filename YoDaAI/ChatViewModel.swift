@@ -65,7 +65,11 @@ final class ChatViewModel: ObservableObject {
     @Published var mentionSearchText: String = ""  // Filter text for mention picker
     @Published var pendingImages: [PendingImage] = []  // Images being composed
     var activeThreadID: UUID?
-    
+
+    // MCP Tool execution state tracking
+    @Published var toolExecutionState: ToolExecutionState? = nil
+    @Published var toolExecutionMessageID: UUID? = nil  // Message ID that has active tool execution
+
     // Task tracking for cancellation
     private var currentTask: Task<Void, Never>?
 
@@ -725,18 +729,6 @@ final class ChatViewModel: ObservableObject {
         // Store original content (with tool call XML) for sending back to LLM
         let originalContent = contentToCheck
 
-        // Check if there's already text AFTER the last </tool_call> tag
-        // Some LLMs provide the complete response in one stream
-        var textAfterToolCalls: String? = nil
-        if let lastToolCallEnd = originalContent.range(of: "</tool_call>", options: .backwards) {
-            let afterToolCall = String(originalContent[lastToolCallEnd.upperBound...])
-            let trimmed = afterToolCall.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                textAfterToolCalls = trimmed
-                print("[MCP] Found text after tool calls: \(trimmed.prefix(200))")
-            }
-        }
-
         // Extract the base content (text before any tool execution indicators)
         // Remove any existing tool execution messages
         var baseContent = assistantMessage.content
@@ -747,89 +739,169 @@ final class ChatViewModel: ObservableObject {
         }
 
         // Execute each tool call and collect results, showing progress to user
-        var toolResults: [(name: String, result: String)] = []
+        var toolResults: [(name: String, arguments: String, result: String, success: Bool)] = []
+
+        // Set initial state
+        toolExecutionMessageID = assistantMessage.id
+        toolExecutionState = .preparing(toolCount: toolCalls.count)
 
         for (index, (name, arguments)) in toolCalls.enumerated() {
-            // Update message to show current tool execution progress
-            assistantMessage.content = baseContent + "\n🔧 Executing tool \(index + 1)/\(toolCalls.count): **\(name)**..."
+            // Convert arguments to string for storage and display
+            let argumentsString: String
+            if let args = arguments,
+               let jsonData = try? JSONSerialization.data(withJSONObject: args),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                argumentsString = jsonString
+            } else {
+                argumentsString = "{}"
+            }
+
+            // Extract query from arguments for display
+            let query = extractQueryFromArguments(argumentsString)
+
+            // Update state to executing
+            toolExecutionState = .executing(
+                current: index + 1,
+                total: toolCalls.count,
+                toolName: name,
+                query: query
+            )
+
+            // Keep the base content clean
+            assistantMessage.content = baseContent
             try context.save()
-            
+
             // Check for cancellation before each tool call
             try Task.checkCancellation()
-            
+
             print("[MCP] Executing tool: \(name)")
             do {
                 let result = try await toolRegistry.callTool(name: name, arguments: arguments, servers: mcpServers)
-                toolResults.append((name: name, result: result))
+                toolResults.append((name: name, arguments: argumentsString, result: result, success: true))
                 print("[MCP] Tool \(name) returned: \(result.prefix(200))...")
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 let errorResult = "Error executing tool '\(name)': \(error.localizedDescription)"
-                toolResults.append((name: name, result: errorResult))
+                toolResults.append((name: name, arguments: argumentsString, result: errorResult, success: false))
                 print("[MCP] Tool \(name) failed: \(error)")
             }
         }
+
+        // Update state to processing
+        toolExecutionState = .processing
         
         // Check for cancellation before follow-up
         try Task.checkCancellation()
 
-        // Format tool results for potential follow-up call
+        // Format tool results and send back to LLM for response based on actual results
         let toolResultsContent = formatToolResults(toolResults)
+        print("[MCP] Tool results formatted (length: \(toolResultsContent.count)), making follow-up API call")
+        print("[MCP] Tool results content: \(toolResultsContent.prefix(500))")
 
         // Build updated message history including the tool results
         var updatedMessages = requestMessages
         updatedMessages.append(OpenAIChatMessage(role: "assistant", content: originalContent))
-        updatedMessages.append(OpenAIChatMessage(role: "system", content: toolResultsContent))
+        // Tool results should be sent as a USER message, not system
+        updatedMessages.append(OpenAIChatMessage(role: "user", content: toolResultsContent))
 
-        // Check if LLM already provided text after tool calls
-        if let existingResponse = textAfterToolCalls {
-            // LLM already provided the response - just display it!
-            print("[MCP] Using existing response from after tool calls")
-            assistantMessage.content = baseContent + "\n\n" + existingResponse
-            try context.save()
-        } else {
-            // No response after tool calls - need to make follow-up API call
-            print("[MCP] No text after tool calls, making follow-up API call")
+        print("[MCP] Updated message count: \(updatedMessages.count)")
+        print("[MCP] Last message role: \(updatedMessages.last?.role ?? "unknown")")
+        print("[MCP] Message sequence: \(updatedMessages.suffix(3).map { $0.role })")
 
-            // Show tool execution completion
-            assistantMessage.content = baseContent + "\n✅ Tools completed. Generating response..."
-            try context.save()
+        // Check for cancellation before streaming follow-up
+        try Task.checkCancellation()
 
-            // Check for cancellation before streaming follow-up
-            try Task.checkCancellation()
+        // Stream the follow-up response into the SAME message
+        // This response will be based on the ACTUAL tool results
+        print("[MCP] Creating stream with baseURL: \(provider.baseURL), model: \(provider.selectedModel)")
+        let stream = client.createChatCompletionStream(
+            baseURL: provider.baseURL,
+            apiKey: provider.apiKey,
+            model: provider.selectedModel,
+            messages: updatedMessages,
+            temperature: settings.temperature,
+            maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
+        )
 
-            // Stream the follow-up response into the SAME message
-            let stream = client.createChatCompletionStream(
-                baseURL: provider.baseURL,
-                apiKey: provider.apiKey,
-                model: provider.selectedModel,
-                messages: updatedMessages,
-                temperature: settings.temperature,
-                maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
-            )
+        // Reset message content to base + prepare for streaming the result-based response
+        assistantMessage.content = baseContent + "\n\n"
+        try context.save()
 
-            // Continue streaming the final response into the same message
-            // Reset to base content and prepare for streaming
-            assistantMessage.content = baseContent + "\n\n"
-            try context.save()  // Save the reset state
+        print("[MCP] Starting to stream follow-up response based on tool results...")
+        streamingMessageID = assistantMessage.id
 
-            print("[MCP] Starting to stream follow-up response...")
-            streamingMessageID = assistantMessage.id
+        var chunkCount = 0
+        var totalContent = ""
+        var streamError: Error? = nil
 
-            var chunkCount = 0
+        do {
             for try await chunk in stream {
                 try Task.checkCancellation()
                 assistantMessage.content += chunk
+                totalContent += chunk
                 chunkCount += 1
-            }
 
-            print("[MCP] Follow-up streaming complete. Received \(chunkCount) chunks")
-            streamingMessageID = nil
-            try context.save()
+                // Save every 10 chunks to update UI
+                if chunkCount % 10 == 0 {
+                    try context.save()
+                }
+            }
+        } catch {
+            streamError = error
+            print("[MCP] ERROR during streaming: \(error)")
+            print("[MCP] Error details: \(error.localizedDescription)")
         }
 
-        // Recursively check for more tool calls in the follow-up response
+        print("[MCP] Follow-up streaming complete. Received \(chunkCount) chunks, total length: \(totalContent.count)")
+        if chunkCount == 0 {
+            print("[MCP] ERROR: No chunks received from follow-up stream!")
+            print("[MCP] Provider: \(provider.selectedModel), Messages: \(updatedMessages.count)")
+            if let error = streamError {
+                print("[MCP] Stream error: \(error)")
+                // Show error to user
+                assistantMessage.content = baseContent + "\n\n⚠️ Error: Failed to get response after tool execution. \(error.localizedDescription)"
+            } else {
+                print("[MCP] No error thrown - stream just returned empty")
+                // Show message to user
+                assistantMessage.content = baseContent + "\n\n⚠️ No response received from API after tool execution."
+            }
+        } else {
+            print("[MCP] First 200 chars of response: \(totalContent.prefix(200))")
+        }
+
+        streamingMessageID = nil
+        try context.save()
+
+        // Update tool execution state to completed with results
+        let executionResults = toolResults.map { (name, arguments, result, success) in
+            let query = extractQueryFromArguments(arguments)
+            let resultPreview = String(result.prefix(500))
+            return ToolExecutionResult(
+                toolName: name,
+                query: query,
+                resultPreview: resultPreview,
+                fullResult: result,
+                success: success
+            )
+        }
+        toolExecutionState = .completed(results: executionResults)
+
+        // Clear state after a delay
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            if toolExecutionMessageID == assistantMessage.id {
+                toolExecutionState = nil
+                toolExecutionMessageID = nil
+            }
+        }
+
+        // Note: Recursive tool calling disabled to prevent infinite loops
+        // The LLM should include all necessary tool calls in a single response
+        // Multi-turn tool use should be handled by the user asking follow-up questions
+        // If you need multi-turn tool support, enable this with stricter limits
+
+        /* DISABLED - causes infinite loop when LLM keeps requesting more searches
         try await executeToolCallsIfNeeded(
             assistantMessage: assistantMessage,
             thread: thread,
@@ -840,6 +912,7 @@ final class ChatViewModel: ObservableObject {
             in: context,
             depth: depth + 1
         )
+        */
     }
     
     /// Format progress text while tools are executing
@@ -932,20 +1005,39 @@ final class ChatViewModel: ObservableObject {
     }
     
     /// Format tool results for injection into conversation
-    private func formatToolResults(_ results: [(name: String, result: String)]) -> String {
+    private func formatToolResults(_ results: [(name: String, arguments: String, result: String, success: Bool)]) -> String {
         var lines: [String] = ["Tool execution results:"]
-        
-        for (name, result) in results {
+
+        for (name, _, result, _) in results {
             lines.append("")
             lines.append("<tool_result name=\"\(name)\">")
             lines.append(result)
             lines.append("</tool_result>")
         }
-        
+
         lines.append("")
         lines.append("Please continue your response based on the tool results above. If you need to call more tools, use the <tool_call> format. Otherwise, provide your final answer to the user.")
-        
+
         return lines.joined(separator: "\n")
+    }
+
+    /// Extract query or relevant info from tool arguments for UI display
+    private func extractQueryFromArguments(_ arguments: String) -> String? {
+        // Try to parse JSON and extract common query fields
+        guard let data = arguments.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        // Common query field names
+        let queryFields = ["query", "q", "search", "text", "prompt", "url"]
+        for field in queryFields {
+            if let value = json[field] as? String, !value.isEmpty {
+                return value
+            }
+        }
+
+        return nil
     }
 
     func insertLastAssistantMessageIntoFocusedApp(in context: ModelContext) {

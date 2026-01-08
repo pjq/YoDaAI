@@ -527,6 +527,13 @@ private struct MessageRowView: View {
                     if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         AssistantMessageContentView(content: message.content)
                     }
+
+                    // Show tool execution card if this message has active tool execution
+                    if let state = viewModel.toolExecutionState,
+                       viewModel.toolExecutionMessageID == message.id {
+                        MCPToolExecutionCard(state: state)
+                            .padding(.top, 8)
+                    }
                 }
 
                 let isStreamingAssistantMessage = (message.role == .assistant && viewModel.streamingMessageID == message.id)

@@ -286,28 +286,46 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                     }
                     
                     // Process SSE stream
+                    var lineCount = 0
+                    var yieldCount = 0
                     for try await line in bytes.lines {
+                        lineCount += 1
                         // SSE format: "data: {json}" or "data: [DONE]"
-                        guard line.hasPrefix("data: ") else { continue }
-                        
+                        guard line.hasPrefix("data: ") else {
+                            if lineCount <= 5 {
+                                print("[OpenAIStream] Non-data line \(lineCount): \(line.prefix(100))")
+                            }
+                            continue
+                        }
+
                         let jsonString = String(line.dropFirst(6))
-                        
+
                         if jsonString == "[DONE]" {
+                            print("[OpenAIStream] Received [DONE], yielded \(yieldCount) chunks")
                             break
                         }
-                        
-                        guard let jsonData = jsonString.data(using: .utf8) else { continue }
-                        
+
+                        guard let jsonData = jsonString.data(using: .utf8) else {
+                            print("[OpenAIStream] Failed to convert to data: \(jsonString.prefix(100))")
+                            continue
+                        }
+
                         do {
                             let chunk = try JSONDecoder().decode(OpenAIChatCompletionsStreamResponse.self, from: jsonData)
                             if let content = chunk.choices.first?.delta.content, !content.isEmpty {
+                                yieldCount += 1
                                 continuation.yield(content)
                             }
                         } catch {
                             // Skip malformed chunks but continue streaming
+                            if lineCount <= 5 {
+                                print("[OpenAIStream] Decode error on line \(lineCount): \(error)")
+                                print("[OpenAIStream] JSON was: \(jsonString.prefix(200))")
+                            }
                             continue
                         }
                     }
+                    print("[OpenAIStream] Stream ended. Lines: \(lineCount), Yielded: \(yieldCount))")
                     
                     continuation.finish()
                 } catch {
