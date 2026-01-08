@@ -183,6 +183,30 @@ find_built_app() {
     echo "$app_path"
 }
 
+# Code sign the app (ad-hoc signing to avoid Gatekeeper issues)
+sign_app() {
+    local app_path=$1
+
+    print_info "Code signing app (ad-hoc)..."
+
+    # Remove existing signature if any
+    codesign --remove-signature "$app_path" 2>/dev/null || true
+
+    # Sign with ad-hoc identity
+    codesign --force --deep --sign - "$app_path"
+
+    if [ $? -eq 0 ]; then
+        print_success "App signed successfully"
+    else
+        print_error "Failed to sign app (non-fatal, continuing...)"
+    fi
+
+    # Verify signature
+    codesign --verify --verbose "$app_path" 2>/dev/null && \
+        print_success "Signature verified" || \
+        print_info "Note: App is unsigned (users will need to bypass Gatekeeper)"
+}
+
 # Create ZIP artifact
 create_zip() {
     local app_path=$1
@@ -263,7 +287,25 @@ ${changelog}
 1. Download \`${PROJECT_NAME}-${version}.zip\` or \`${PROJECT_NAME}-${version}.dmg\`
 2. Open the downloaded file
 3. Drag YoDaAI to your Applications folder
-4. Grant Accessibility and Automation permissions (see docs)
+4. **Important**: Remove the quarantine flag (first time only):
+   \`\`\`bash
+   xattr -cr /Applications/YoDaAI.app
+   \`\`\`
+5. Open YoDaAI
+6. Grant Accessibility and Automation permissions (see docs)
+
+### Troubleshooting: "YoDaAI is damaged"
+
+If you see this error, it's just macOS Gatekeeper being cautious. The app is **not** actually damaged.
+
+**Quick fix:**
+\`\`\`bash
+xattr -cr /Applications/YoDaAI.app
+\`\`\`
+
+**Alternative:** Right-click YoDaAI → Open → Click "Open" in the dialog.
+
+See [Installation Troubleshooting](https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/main/docs/INSTALLATION_TROUBLESHOOTING.md) for more solutions.
 
 ## Permissions Required
 
@@ -425,6 +467,9 @@ main() {
     print_info "Locating built app..."
     local app_path=$(find_built_app)
     print_success "Found: ${app_path}"
+
+    # Sign the app
+    sign_app "$app_path"
 
     # Create artifacts
     print_header "Creating Release Artifacts"
