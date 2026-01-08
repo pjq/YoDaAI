@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import Combine
+import ApplicationServices
 
 // MARK: - App Text Scale Manager
 /// Manages the app-wide text scale level with persistence
@@ -98,7 +99,12 @@ struct YoDaAIApp: App {
     @StateObject private var scaleManager = AppScaleManager.shared
     @StateObject private var settingsRouter = SettingsRouter()
     @StateObject private var appState = AppState.shared
-    
+
+    init() {
+        // Request Accessibility permission on first launch
+        requestAccessibilityPermissionOnStartup()
+    }
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             ChatThread.self,
@@ -170,6 +176,30 @@ struct YoDaAIApp: App {
 // MARK: - Notification for New Chat
 extension Notification.Name {
     static let createNewChat = Notification.Name("createNewChat")
+}
+
+// MARK: - Accessibility Permission Helper
+/// Request Accessibility permission on app startup
+private func requestAccessibilityPermissionOnStartup() {
+    // Check if permission is already granted
+    if AXIsProcessTrusted() {
+        print("[YoDaAI] Accessibility permission already granted")
+        return
+    }
+
+    // Check if this is first launch (no previous permission request)
+    let hasRequestedBefore = UserDefaults.standard.bool(forKey: "hasRequestedAccessibilityPermission")
+
+    if !hasRequestedBefore {
+        print("[YoDaAI] First launch - requesting Accessibility permission")
+        UserDefaults.standard.set(true, forKey: "hasRequestedAccessibilityPermission")
+
+        // Request permission with prompt
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as NSString: true]
+        _ = AXIsProcessTrustedWithOptions(options)
+    } else {
+        print("[YoDaAI] Accessibility permission not granted - user needs to enable manually in System Settings")
+    }
 }
 
 // MARK: - App Settings View (for Settings scene)
