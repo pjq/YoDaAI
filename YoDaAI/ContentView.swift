@@ -1150,29 +1150,39 @@ private struct MarkdownTextView: View {
             .font(.system(size: 14 * scaleManager.scale))
             .textual.textSelection(.enabled)  // Enable text selection
             .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
+            .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
     }
 }
 
-// MARK: - Code Block View
-private struct CodeBlockView: View {
-    let language: String?
-    let code: String
-    @State private var isCopied = false
+// MARK: - Custom Code Block Style with Copy Button
+private struct CustomCodeBlockStyle: StructuredText.CodeBlockStyle {
     @ObservedObject private var scaleManager = AppScaleManager.shared
-    
+
+    func makeBody(configuration: Configuration) -> some View {
+        CustomCodeBlockView(
+            configuration: configuration,
+            scaleManager: scaleManager
+        )
+    }
+}
+
+private struct CustomCodeBlockView: View {
+    let configuration: StructuredText.CodeBlockStyleConfiguration
+    @ObservedObject var scaleManager: AppScaleManager
+    @State private var isCopied = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header with language and copy button
+            // Header with language hint and copy button
             HStack {
-                if let language, !language.isEmpty {
+                if let language = configuration.languageHint, !language.isEmpty {
                     Text(language)
                         .font(.system(size: 11 * scaleManager.scale))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(code, forType: .string)
+                    configuration.codeBlock.copyToPasteboard()
                     isCopied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                         isCopied = false
@@ -1190,21 +1200,17 @@ private struct CodeBlockView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
-            
-            // Code content
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
-                    .font(.system(size: 13 * scaleManager.scale, weight: .regular, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(12)
-            }
+
+            // Code content rendered by Textual with syntax highlighting
+            configuration.label
+                .textual.lineSpacing(.fontScaled(0.39))
+                .textual.fontScale(0.882 * scaleManager.scale)
+                .fixedSize(horizontal: false, vertical: true)
+                .monospaced()
+                .padding(12)
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
     }
 }
 
