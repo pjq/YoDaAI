@@ -606,6 +606,8 @@ private struct MessageRowView: View {
         isDisabled: Bool,
         onTap: @escaping () -> Void
     ) -> some View {
+        let isShowingFeedback = (action == .copy && showCopiedFeedback)
+
         Button {
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
                 pressedAction = action
@@ -637,7 +639,11 @@ private struct MessageRowView: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.7), value: pressedAction)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isDestructive ? Color.red.opacity(0.9) : Color.secondary)
+        .foregroundStyle(
+            isShowingFeedback ? .green :
+            isDestructive ? Color.red.opacity(0.9) :
+            Color.secondary
+        )
         .help(help)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.5 : 1.0)
@@ -1146,9 +1152,10 @@ private struct MarkdownTextView: View {
     var body: some View {
         // Textual's StructuredText provides rich markdown rendering
         // with code blocks, tables, syntax highlighting, and more
+        // Note: Text selection disabled on StructuredText to allow button clicks
+        // Code is still copyable via the copy button
         StructuredText(markdown: content)
             .font(.system(size: 14 * scaleManager.scale))
-            .textual.textSelection(.enabled)  // Enable text selection
             .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
             .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
     }
@@ -1172,45 +1179,86 @@ private struct CustomCodeBlockView: View {
     @State private var isCopied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header with language hint and copy button
-            HStack {
-                if let language = configuration.languageHint, !language.isEmpty {
-                    Text(language)
-                        .font(.system(size: 11 * scaleManager.scale))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    configuration.codeBlock.copyToPasteboard()
-                    isCopied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        isCopied = false
+        ZStack(alignment: .topTrailing) {
+            // Main code block content
+            VStack(alignment: .leading, spacing: 0) {
+                // Header with language hint (no button here - it's in overlay)
+                HStack {
+                    if let language = configuration.languageHint, !language.isEmpty {
+                        Text(language)
+                            .font(.system(size: 11 * scaleManager.scale))
+                            .foregroundStyle(.secondary)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        Text(isCopied ? "Copied" : "Copy")
-                    }
-                    .font(.system(size: 11 * scaleManager.scale))
+                    Spacer()
+                    // Empty space for the button overlay
+                    Color.clear.frame(width: 80, height: 24)
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(isCopied ? .green : .secondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
 
-            // Code content rendered by Textual with syntax highlighting
-            configuration.label
-                .textual.lineSpacing(.fontScaled(0.39))
-                .textual.fontScale(0.882 * scaleManager.scale)
-                .fixedSize(horizontal: false, vertical: true)
-                .monospaced()
-                .padding(12)
+                // Code content rendered by Textual with syntax highlighting
+                configuration.label
+                    .textual.lineSpacing(.fontScaled(0.39))
+                    .textual.fontScale(0.882 * scaleManager.scale)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .monospaced()
+                    .padding(12)
+            }
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            // Copy button as an overlay - outside the text selection context
+            CopyButtonView(
+                isCopied: $isCopied,
+                scaleManager: scaleManager,
+                onCopy: {
+                    configuration.codeBlock.copyToPasteboard()
+                }
+            )
+            .padding(.top, 8)
+            .padding(.trailing, 12)
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// Separate view for the copy button to completely isolate it from text selection
+private struct CopyButtonView: View {
+    @Binding var isCopied: Bool
+    @ObservedObject var scaleManager: AppScaleManager
+    let onCopy: () -> Void
+
+    var body: some View {
+        Button(action: {
+            print("[CodeBlock] Copy button clicked")
+            onCopy()
+            print("[CodeBlock] Setting isCopied = true")
+            withAnimation {
+                isCopied = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                print("[CodeBlock] Resetting isCopied = false")
+                withAnimation {
+                    isCopied = false
+                }
+            }
+        }) {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 13 * scaleManager.scale))
+                .foregroundStyle(isCopied ? .green : .secondary)
+                .padding(6)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+                .cornerRadius(4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
     }
 }
 
