@@ -599,7 +599,10 @@ private struct MessageRowView: View {
     }
 
     var body: some View {
+        let isContextMessage = message.role == .user && !message.appContexts.isEmpty
+
         HStack(alignment: .top) {
+            // User messages (including context cards) are right-aligned
             if message.role == .user {
                 Spacer(minLength: 60)
             }
@@ -611,15 +614,49 @@ private struct MessageRowView: View {
                 }
 
                 if message.role == .user {
-                    // User message: right-aligned bubble
+                    // Check if this is an @ mention context message
+                    let isContextMessage = !message.appContexts.isEmpty
+
                     if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(message.content)
-                            .font(.system(size: 14 * scaleManager.scale))
-                            .padding(.horizontal, 14)
+                        if isContextMessage, let appContext = message.appContexts.first {
+                            // @ Mention context card - styled differently
+                            HStack(alignment: .top, spacing: 10) {
+                                AppIconView(bundleIdentifier: appContext.bundleIdentifier)
+                                    .frame(width: 32, height: 32)
+                                    .cornerRadius(6)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(appContext.appName)
+                                        .font(.system(size: 13 * scaleManager.scale, weight: .semibold))
+                                        .foregroundStyle(.primary)
+
+                                    Text(message.content)
+                                        .font(.system(size: 12 * scaleManager.scale))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(nil)
+                                }
+                            }
+                            .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.accentColor.opacity(0.08))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 1)
+                                    )
+                            )
                             .textSelection(.enabled)
+                        } else {
+                            // Regular user message: right-aligned bubble
+                            Text(message.content)
+                                .font(.system(size: 14 * scaleManager.scale))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(Color(nsColor: .controlBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .textSelection(.enabled)
+                        }
                     }
                 } else {
                     // Assistant message: Markdown rendered with tool call support
@@ -681,6 +718,7 @@ private struct MessageRowView: View {
                 }
             }
 
+            // Add spacer on right for assistant messages only
             if message.role != .user {
                 Spacer(minLength: 60)
             }
@@ -4074,6 +4112,38 @@ private struct AutomationAppRow: View {
         print("[AutomationAppRow] → Permission is GRANTED")
         print("[AutomationAppRow] → Result: \(result.stringValue ?? "nil")")
         return .granted
+    }
+}
+
+// MARK: - App Icon View
+/// Display the app icon for a given bundle identifier
+private struct AppIconView: View {
+    let bundleIdentifier: String
+    @State private var icon: NSImage?
+
+    var body: some View {
+        Group {
+            if let icon = icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                // Fallback: generic app icon
+                Image(systemName: "app.fill")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            loadIcon()
+        }
+    }
+
+    private func loadIcon() {
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return
+        }
+
+        icon = NSWorkspace.shared.icon(forFile: appURL.path)
     }
 }
 

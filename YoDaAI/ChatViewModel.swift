@@ -306,16 +306,16 @@ final class ChatViewModel: ObservableObject {
 
     func send(in context: ModelContext) async {
         let trimmed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Allow sending if there's text OR images
-        guard !trimmed.isEmpty || !pendingImages.isEmpty else { return }
-
-        isSending = true
-        lastErrorMessage = nil
-
         // Capture state before clearing - including cached contexts!
         let appsToCapture = mentionedApps
         let cachedContexts = mentionedAppContexts
         let imagesToSend = pendingImages
+
+        // Allow sending if there's text OR images OR @ mentions
+        guard !trimmed.isEmpty || !imagesToSend.isEmpty || !appsToCapture.isEmpty else { return }
+
+        isSending = true
+        lastErrorMessage = nil
 
         composerText = ""
         mentionedApps = []
@@ -331,38 +331,75 @@ final class ChatViewModel: ObservableObject {
         do {
             // Check for cancellation early
             try Task.checkCancellation()
-            
+
             let provider = try ensureDefaultProvider(in: context)
             let thread = try ensureThread(in: context)
 
-            // Create user message with attachments
-            let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread)
-            context.insert(userMessage)
+            // STEP 1: Create separate user messages for each @ mentioned app
+            for app in appsToCapture {
+                // Get cached context
+                var snapshot: AppContextSnapshot?
+                if let cached = cachedContexts[app.bundleIdentifier] {
+                    snapshot = cached
+                } else if let globalCached = ContentCacheService.shared.getCachedSnapshot(for: app.bundleIdentifier) {
+                    snapshot = globalCached
+                } else {
+                    snapshot = await accessibilityService.captureContextWithActivation(for: app.bundleIdentifier, promptIfNeeded: true)
+                }
 
-            // Save images to disk and create attachments
-            for pendingImage in imagesToSend {
-                try Task.checkCancellation()
-                
-                let result = try ImageStorageService.shared.saveImage(
-                    data: pendingImage.data,
-                    originalFileName: pendingImage.fileName
-                )
+                if let snapshot = snapshot {
+                    // Format context as message content
+                    let contextText = formatAppContext(snapshot, isMentioned: true)
 
-                let attachment = ImageAttachment(
-                    fileName: result.fileName,
-                    filePath: result.filePath,
-                    mimeType: result.mimeType,
-                    fileSize: result.fileSize,
-                    width: result.dimensions?.width,
-                    height: result.dimensions?.height,
-                    message: userMessage
-                )
-                context.insert(attachment)
+                    // Create user message for this @ mention
+                    let contextMessage = ChatMessage(role: .user, content: contextText, thread: thread)
+                    context.insert(contextMessage)
+
+                    // Attach app context metadata
+                    let appContext = AppContextAttachment(
+                        bundleIdentifier: snapshot.bundleIdentifier,
+                        appName: snapshot.appName,
+                        windowTitle: snapshot.windowTitle,
+                        focusedContent: snapshot.focusedValuePreview,
+                        focusedRole: snapshot.focusedRole,
+                        isSecureField: snapshot.focusedIsSecure,
+                        message: contextMessage
+                    )
+                    context.insert(appContext)
+                }
+            }
+
+            // STEP 2: Create user message with text/images (if user typed anything)
+            if !trimmed.isEmpty || !imagesToSend.isEmpty {
+                let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread)
+                context.insert(userMessage)
+
+                // Save images to disk and create attachments
+                for pendingImage in imagesToSend {
+                    try Task.checkCancellation()
+
+                    let result = try ImageStorageService.shared.saveImage(
+                        data: pendingImage.data,
+                        originalFileName: pendingImage.fileName
+                    )
+
+                    let attachment = ImageAttachment(
+                        fileName: result.fileName,
+                        filePath: result.filePath,
+                        mimeType: result.mimeType,
+                        fileSize: result.fileSize,
+                        width: result.dimensions?.width,
+                        height: result.dimensions?.height,
+                        message: userMessage
+                    )
+                    context.insert(attachment)
+                }
             }
 
             try context.save()
 
-            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: appsToCapture, cachedContexts: cachedContexts, in: context)
+            // STEP 3: Generate AI response (no need to pass mentions - they're now in message history)
+            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], cachedContexts: [:], in: context)
 
             // Auto-generate thread title from first user message if still "New Chat"
             if thread.title == "New Chat" {
@@ -1126,30 +1163,26 @@ final class ChatViewModel: ObservableObject {
     private func formatAppContext(_ snapshot: AppContextSnapshot?, isMentioned: Bool = false) -> String {
         guard let snapshot else { return "" }
 
-        var lines: [String] = []
-        if isMentioned {
-            lines.append("YoDaAI @mentioned app context:")
-        } else {
-            lines.append("YoDaAI app context (frontmost macOS app):")
-        }
-        lines.append("- App: \(snapshot.appName) (\(snapshot.bundleIdentifier))")
+        var parts: [String] = []
 
+        // App name
+        parts.append("📱 \(snapshot.appName)")
+
+        // Window title
         if let title = snapshot.windowTitle, !title.isEmpty {
-            lines.append("- Window: \(title)")
+            parts.append("Window: \(title)")
         }
 
-        if let role = snapshot.focusedRole {
-            lines.append("- Focused role: \(role)")
-        }
-
+        // Content
         if snapshot.focusedIsSecure {
-            lines.append("- Content: (redacted: secure field)")
-        } else if let preview = snapshot.focusedValuePreview, !preview.isEmpty {
-            lines.append("- Content: \(preview)")
+            parts.append("🔒 Secure field (content hidden)")
+        } else if let content = snapshot.focusedValuePreview, !content.isEmpty {
+            parts.append("Content: \(content)")
+        } else {
+            parts.append("ℹ️ No content captured (grant Accessibility permission)")
         }
 
-        lines.append("Instruction: Use this context only to answer the user's request, and do not invent UI details.")
-        return lines.joined(separator: "\n")
+        return parts.joined(separator: "\n")
     }
 
     // MARK: - Slash Command Handling
