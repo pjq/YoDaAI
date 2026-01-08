@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		346BE6AE2F0EA28C00F8880E /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 34A024FE2F0E0001009F907B /* MCP */; };
+		346BE6E82F0FE7FB00F8880E /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 346BE6E72F0FE7FB00F8880E /* Textual */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				346BE6E82F0FE7FB00F8880E /* Textual in Frameworks */,
 				346BE6AE2F0EA28C00F8880E /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -118,6 +120,7 @@
 			name = YoDaAI;
 			packageProductDependencies = (
 				34A024FE2F0E0001009F907B /* MCP */,
+				346BE6E72F0FE7FB00F8880E /* Textual */,
 			);
 			productName = YoDaAI;
 			productReference = 34A024D12F0D0BC5009F907B /* YoDaAI.app */;
@@ -203,6 +206,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */,
+				346BE6E62F0FE7FB00F8880E /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 34A024D22F0D0BC5009F907B /* Products */;
@@ -636,6 +640,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		346BE6E62F0FE7FB00F8880E /* XCRemoteSwiftPackageReference "textual" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/textual";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.1;
+			};
+		};
 		34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk.git";
@@ -647,6 +659,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		346BE6E72F0FE7FB00F8880E /* Textual */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 346BE6E62F0FE7FB00F8880E /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
+		};
 		34A024FE2F0E0001009F907B /* MCP */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 34A024FD2F0E0000009F907B /* XCRemoteSwiftPackageReference "swift-sdk" */;
