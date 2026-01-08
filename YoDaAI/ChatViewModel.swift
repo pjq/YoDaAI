@@ -1154,11 +1154,13 @@ final class ChatViewModel: ObservableObject {
             return false
         }
 
+        print("[SlashCommand] Executing command: \(command.displayName)")
+
         // Clear composer after detecting command
         composerText = ""
         showSlashCommandPicker = false
 
-        // Execute command (these are placeholders, will be implemented with proper context)
+        // Execute command
         switch command {
         case .help:
             handleHelpCommand()
@@ -1188,6 +1190,7 @@ final class ChatViewModel: ObservableObject {
     var onCopyCommand: (() -> Void)?
 
     private func handleHelpCommand() {
+        print("[SlashCommand] handleHelpCommand called, handler set: \(onHelpCommand != nil)")
         if let handler = onHelpCommand {
             handler()
         } else {
@@ -1200,22 +1203,27 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func handleClearCommand(in context: ModelContext) {
+        print("[SlashCommand] handleClearCommand called, handler set: \(onClearCommand != nil)")
         onClearCommand?()
     }
 
     private func handleNewCommand() {
+        print("[SlashCommand] handleNewCommand called, handler set: \(onNewCommand != nil)")
         onNewCommand?()
     }
 
     private func handleModelsCommand() {
+        print("[SlashCommand] handleModelsCommand called, handler set: \(onModelsCommand != nil)")
         onModelsCommand?()
     }
 
     private func handleSettingsCommand() {
+        print("[SlashCommand] handleSettingsCommand called, handler set: \(onSettingsCommand != nil)")
         onSettingsCommand?()
     }
 
     private func handleCopyCommand(in context: ModelContext) {
+        print("[SlashCommand] handleCopyCommand called, handler set: \(onCopyCommand != nil)")
         onCopyCommand?()
     }
 }

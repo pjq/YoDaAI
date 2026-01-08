@@ -291,14 +291,22 @@ private struct ChatDetailView: View {
     }
 
     private func setupCommandHandlers() {
+        print("[SlashCommand] Setting up command handlers in ChatDetailView")
+
         // Help command - show alert with available commands
         viewModel.onHelpCommand = {
+            print("[SlashCommand] Help handler called")
             showHelpAlert = true
         }
 
         // Clear command - delete all messages in current thread
         viewModel.onClearCommand = {
-            guard let thread = thread else { return }
+            print("[SlashCommand] Clear handler called")
+            guard let thread = thread else {
+                print("[SlashCommand] Clear: thread is nil")
+                return
+            }
+            print("[SlashCommand] Clear: deleting \(thread.messages.count) messages")
             for message in thread.messages {
                 modelContext.delete(message)
             }
@@ -307,29 +315,39 @@ private struct ChatDetailView: View {
 
         // New command - create new chat
         viewModel.onNewCommand = {
+            print("[SlashCommand] New handler called")
             onCreateNewChat()
         }
 
         // Models command - show model picker
         viewModel.onModelsCommand = {
+            print("[SlashCommand] Models handler called")
             showModelPicker = true
         }
 
         // Settings command - open settings
         viewModel.onSettingsCommand = {
+            print("[SlashCommand] Settings handler called")
             onOpenAPIKeysSettings()
         }
 
         // Copy command - copy conversation to clipboard
         viewModel.onCopyCommand = {
-            guard let thread = thread else { return }
+            print("[SlashCommand] Copy handler called")
+            guard let thread = thread else {
+                print("[SlashCommand] Copy: thread is nil")
+                return
+            }
             let text = thread.messages
                 .sorted { $0.createdAt < $1.createdAt }
                 .map { "\($0.role == .user ? "You" : "Assistant"): \($0.content)" }
                 .joined(separator: "\n\n")
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+            print("[SlashCommand] Copy: copied \(text.count) characters to clipboard")
         }
+
+        print("[SlashCommand] Command handlers setup complete")
     }
 }
 
@@ -1370,36 +1388,38 @@ private struct ComposerView: View {
                     MentionChipsView(viewModel: viewModel)
                 }
 
-                // Text Input
-                TextField("Ask anything, @ to mention apps, / for commands", text: $viewModel.composerText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...8)
-                    .font(.system(size: 14 * scaleManager.scale))
-                    .focused($isFocused)
-                    .onChange(of: viewModel.composerText) { _, newValue in
-                        // Check if user typed @
-                        if newValue.hasSuffix("@") {
-                            viewModel.showMentionPicker = true
-                            viewModel.mentionSearchText = ""
+                // Text Input with popovers
+                ZStack(alignment: .top) {
+                    TextField("Ask anything, @ to mention apps, / for commands", text: $viewModel.composerText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .lineLimit(1...8)
+                        .font(.system(size: 14 * scaleManager.scale))
+                        .focused($isFocused)
+                        .onChange(of: viewModel.composerText) { _, newValue in
+                            // Check if user typed @
+                            if newValue.hasSuffix("@") {
+                                viewModel.showMentionPicker = true
+                                viewModel.mentionSearchText = ""
+                            }
+                            // Check if user typed / for slash commands
+                            viewModel.updateSlashCommandAutocomplete()
                         }
-                        // Check if user typed / for slash commands
-                        viewModel.updateSlashCommandAutocomplete()
-                    }
-                    .onSubmit {
-                        if !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty && !NSEvent.modifierFlags.contains(.shift) {
-                            sendMessage()
+                        .onSubmit {
+                            if !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty && !NSEvent.modifierFlags.contains(.shift) {
+                                sendMessage()
+                            }
                         }
-                    }
-                    .background(PasteInterceptor(onPaste: handleDirectPaste))
-                    .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
-                        return handleDrop(providers: providers)
-                    }
-                    .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .top) {
-                        MentionPickerPopover(viewModel: viewModel)
-                    }
-                    .popover(isPresented: $viewModel.showSlashCommandPicker, arrowEdge: .top) {
-                        SlashCommandPickerPopover(viewModel: viewModel)
-                    }
+                        .background(PasteInterceptor(onPaste: handleDirectPaste))
+                        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+                            return handleDrop(providers: providers)
+                        }
+                }
+                .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .bottom) {
+                    MentionPickerPopover(viewModel: viewModel)
+                }
+                .popover(isPresented: $viewModel.showSlashCommandPicker, arrowEdge: .bottom) {
+                    SlashCommandPickerPopover(viewModel: viewModel)
+                }
 
                 // Toolbar row
                 HStack(spacing: 16) {
