@@ -91,7 +91,7 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: createNewChat) {
-                        Label("New Chat", systemImage: "square.and.pencil")
+                        Image(systemName: "plus.message")
                     }
                     .help("New Chat (Cmd+N)")
                     .disabled(viewModel.isSending) // Disable new chat during API calls
@@ -228,6 +228,9 @@ private struct ChatDetailView: View {
     var onCreateNewChat: () -> Void
     var onOpenAPIKeysSettings: () -> Void
 
+    @State private var showModelPicker = false
+    @State private var showHelpAlert = false
+
     var body: some View {
         VStack(spacing: 0) {
             if let thread {
@@ -244,7 +247,12 @@ private struct ChatDetailView: View {
                 MessageListView(thread: thread, viewModel: viewModel)
 
                 // Composer
-                ComposerView(viewModel: viewModel, thread: thread, providers: providers)
+                ComposerView(
+                    viewModel: viewModel,
+                    thread: thread,
+                    providers: providers,
+                    showModelPicker: $showModelPicker
+                )
             } else {
                 EmptyStateView(onCreateNewChat: onCreateNewChat, onOpenAPIKeysSettings: onOpenAPIKeysSettings)
             }
@@ -271,6 +279,56 @@ private struct ChatDetailView: View {
             }
         } message: {
             Text(viewModel.imageErrorMessage ?? "Unknown error")
+        }
+        .alert("Commands", isPresented: $showHelpAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(SlashCommand.allCases.map { "\($0.displayName) - \($0.description)" }.joined(separator: "\n"))
+        }
+        .onAppear {
+            setupCommandHandlers()
+        }
+    }
+
+    private func setupCommandHandlers() {
+        // Help command - show alert with available commands
+        viewModel.onHelpCommand = {
+            showHelpAlert = true
+        }
+
+        // Clear command - delete all messages in current thread
+        viewModel.onClearCommand = {
+            guard let thread = thread else { return }
+            for message in thread.messages {
+                modelContext.delete(message)
+            }
+            try? modelContext.save()
+        }
+
+        // New command - create new chat
+        viewModel.onNewCommand = {
+            onCreateNewChat()
+        }
+
+        // Models command - show model picker
+        viewModel.onModelsCommand = {
+            showModelPicker = true
+        }
+
+        // Settings command - open settings
+        viewModel.onSettingsCommand = {
+            onOpenAPIKeysSettings()
+        }
+
+        // Copy command - copy conversation to clipboard
+        viewModel.onCopyCommand = {
+            guard let thread = thread else { return }
+            let text = thread.messages
+                .sorted { $0.createdAt < $1.createdAt }
+                .map { "\($0.role == .user ? "You" : "Assistant"): \($0.content)" }
+                .joined(separator: "\n\n")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
         }
     }
 }
@@ -1287,8 +1345,8 @@ private struct ComposerView: View {
     @ObservedObject var viewModel: ChatViewModel
     let thread: ChatThread
     let providers: [LLMProvider]
+    @Binding var showModelPicker: Bool
     @FocusState private var isFocused: Bool
-    @State private var showModelPicker = false
     @State private var showFilePicker = false
     @ObservedObject private var scaleManager = AppScaleManager.shared
 
@@ -1313,7 +1371,7 @@ private struct ComposerView: View {
                 }
 
                 // Text Input
-                TextField("Ask anything, @ to mention apps", text: $viewModel.composerText, axis: .vertical)
+                TextField("Ask anything, @ to mention apps, / for commands", text: $viewModel.composerText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
                     .font(.system(size: 14 * scaleManager.scale))
@@ -1324,6 +1382,8 @@ private struct ComposerView: View {
                             viewModel.showMentionPicker = true
                             viewModel.mentionSearchText = ""
                         }
+                        // Check if user typed / for slash commands
+                        viewModel.updateSlashCommandAutocomplete()
                     }
                     .onSubmit {
                         if !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty && !NSEvent.modifierFlags.contains(.shift) {
@@ -1336,6 +1396,9 @@ private struct ComposerView: View {
                     }
                     .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .top) {
                         MentionPickerPopover(viewModel: viewModel)
+                    }
+                    .popover(isPresented: $viewModel.showSlashCommandPicker, arrowEdge: .top) {
+                        SlashCommandPickerPopover(viewModel: viewModel)
                     }
 
                 // Toolbar row
@@ -1446,6 +1509,12 @@ private struct ComposerView: View {
 
     private func sendMessage() {
         guard canSend else { return }
+
+        // Check if it's a slash command first
+        if viewModel.executeSlashCommand(in: modelContext) {
+            return  // Command was handled, don't send as message
+        }
+
         // Remove trailing @ if user was about to mention
         if viewModel.composerText.hasSuffix("@") {
             viewModel.composerText = String(viewModel.composerText.dropLast())
@@ -1877,8 +1946,80 @@ private struct MentionPickerPopover: View {
         if viewModel.composerText.hasSuffix("@") {
             viewModel.composerText = String(viewModel.composerText.dropLast())
         }
-        
+
         viewModel.addMention(app)
+        dismiss()
+    }
+}
+
+// MARK: - Slash Command Picker Popover
+private struct SlashCommandPickerPopover: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var scaleManager = AppScaleManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Commands")
+                    .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
+                Spacer()
+                Text("Type / to see commands")
+                    .font(.system(size: 11 * scaleManager.scale))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            // Command list
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if viewModel.filteredSlashCommands.isEmpty {
+                        Text("No matching commands")
+                            .font(.system(size: 11 * scaleManager.scale))
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    } else {
+                        ForEach(viewModel.filteredSlashCommands) { command in
+                            Button {
+                                selectCommand(command)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: command.icon)
+                                        .frame(width: 20, height: 20)
+                                        .foregroundStyle(.blue)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(command.displayName)
+                                            .font(.system(size: 14 * scaleManager.scale, weight: .medium))
+                                        Text(command.description)
+                                            .font(.system(size: 10 * scaleManager.scale))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+                                }
+                                .contentShape(Rectangle())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.plain)
+                            .background(Color.primary.opacity(0.001)) // For hover
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 300)
+        }
+        .frame(width: 320)
+    }
+
+    private func selectCommand(_ command: SlashCommand) {
+        viewModel.composerText = command.displayName
         dismiss()
     }
 }

@@ -1127,4 +1127,95 @@ final class ChatViewModel: ObservableObject {
         lines.append("Instruction: Use this context only to answer the user's request, and do not invent UI details.")
         return lines.joined(separator: "\n")
     }
+
+    // MARK: - Slash Command Handling
+
+    /// Published property to show/hide slash command autocomplete
+    @Published var showSlashCommandPicker: Bool = false
+
+    /// Filtered slash commands based on current input
+    @Published var filteredSlashCommands: [SlashCommand] = []
+
+    /// Check if text is a slash command and update autocomplete
+    func updateSlashCommandAutocomplete() {
+        if SlashCommandParser.shouldShowAutocomplete(for: composerText) {
+            filteredSlashCommands = SlashCommandParser.filterCommands(for: composerText)
+            showSlashCommandPicker = !filteredSlashCommands.isEmpty
+        } else {
+            showSlashCommandPicker = false
+            filteredSlashCommands = []
+        }
+    }
+
+    /// Execute a slash command
+    /// Returns true if command was handled, false if text should be sent as message
+    func executeSlashCommand(in context: ModelContext) -> Bool {
+        guard let command = SlashCommandParser.parse(composerText) else {
+            return false
+        }
+
+        // Clear composer after detecting command
+        composerText = ""
+        showSlashCommandPicker = false
+
+        // Execute command (these are placeholders, will be implemented with proper context)
+        switch command {
+        case .help:
+            handleHelpCommand()
+        case .clear:
+            handleClearCommand(in: context)
+        case .new:
+            handleNewCommand()
+        case .models:
+            handleModelsCommand()
+        case .settings:
+            handleSettingsCommand()
+        case .copy:
+            handleCopyCommand(in: context)
+        }
+
+        return true
+    }
+
+    // MARK: - Command Handlers (require context from UI)
+
+    /// Closures for command handlers (set by UI layer)
+    var onHelpCommand: (() -> Void)?
+    var onClearCommand: (() -> Void)?
+    var onNewCommand: (() -> Void)?
+    var onModelsCommand: (() -> Void)?
+    var onSettingsCommand: (() -> Void)?
+    var onCopyCommand: (() -> Void)?
+
+    private func handleHelpCommand() {
+        if let handler = onHelpCommand {
+            handler()
+        } else {
+            // Fallback: show help in console
+            print("[SlashCommand] Available commands:")
+            for command in SlashCommand.allCases {
+                print("  \(command.displayName) - \(command.description)")
+            }
+        }
+    }
+
+    private func handleClearCommand(in context: ModelContext) {
+        onClearCommand?()
+    }
+
+    private func handleNewCommand() {
+        onNewCommand?()
+    }
+
+    private func handleModelsCommand() {
+        onModelsCommand?()
+    }
+
+    private func handleSettingsCommand() {
+        onSettingsCommand?()
+    }
+
+    private func handleCopyCommand(in context: ModelContext) {
+        onCopyCommand?()
+    }
 }
