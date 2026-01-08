@@ -336,11 +336,12 @@ private struct ChatDetailView: View {
             showModelPicker = true
         }
 
-        // Settings command - open settings using macOS standard method
+        // Settings command - open settings window
         viewModel.onSettingsCommand = {
             print("[SlashCommand] Settings handler called")
-            // Use macOS standard way to open settings (Cmd+,)
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+            // Use the existing settings router to open settings
+            onOpenAPIKeysSettings()
+            print("[SlashCommand] Settings: Triggered settings window")
         }
 
         // Copy command - copy conversation to clipboard

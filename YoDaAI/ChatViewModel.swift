@@ -1160,20 +1160,24 @@ final class ChatViewModel: ObservableObject {
         composerText = ""
         showSlashCommandPicker = false
 
-        // Execute command
-        switch command {
-        case .help:
-            handleHelpCommand()
-        case .clear:
-            handleClearCommand(in: context)
-        case .new:
-            handleNewCommand()
-        case .models:
-            handleModelsCommand()
-        case .settings:
-            handleSettingsCommand()
-        case .copy:
-            handleCopyCommand(in: context)
+        // Execute command asynchronously to avoid "Publishing changes during view update" errors
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            switch command {
+            case .help:
+                self.handleHelpCommand()
+            case .clear:
+                self.handleClearCommand(in: context)
+            case .new:
+                self.handleNewCommand()
+            case .models:
+                self.handleModelsCommand()
+            case .settings:
+                self.handleSettingsCommand()
+            case .copy:
+                self.handleCopyCommand(in: context)
+            }
         }
 
         return true
