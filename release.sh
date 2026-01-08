@@ -26,9 +26,12 @@ INFO_PLIST="${PROJECT_DIR}/YoDaAI/Info.plist"
 REPO_OWNER="pjq"
 REPO_NAME="YoDaAI"
 
-# Load GitHub token from ~/.zshrc
-if [ -f ~/.zshrc ]; then
-    source ~/.zshrc
+# Load GitHub token from environment or zshrc
+# Try to load from .zshrc but ignore Oh My Zsh errors
+if [ -z "$GITHUB_TOKEN" ] && [ -f ~/.zshrc ]; then
+    # Extract GITHUB_TOKEN from .zshrc without fully sourcing it
+    GITHUB_TOKEN=$(grep "^export GITHUB_TOKEN" ~/.zshrc | sed 's/export GITHUB_TOKEN=//' | tr -d '"' | tr -d "'")
+    export GITHUB_TOKEN
 fi
 
 if [ -z "$GITHUB_TOKEN" ]; then
