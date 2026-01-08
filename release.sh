@@ -284,24 +284,19 @@ ${changelog}
 
 ### macOS (Apple Silicon & Intel)
 
-1. Download \`${PROJECT_NAME}-${version}.zip\` or \`${PROJECT_NAME}-${version}.dmg\`
+1. Download ${PROJECT_NAME}-${version}.zip or ${PROJECT_NAME}-${version}.dmg
 2. Open the downloaded file
 3. Drag YoDaAI to your Applications folder
 4. **Important**: Remove the quarantine flag (first time only):
-   \`\`\`bash
-   xattr -cr /Applications/YoDaAI.app
-   \`\`\`
+   - Run in Terminal: xattr -cr /Applications/YoDaAI.app
 5. Open YoDaAI
 6. Grant Accessibility and Automation permissions (see docs)
 
 ### Troubleshooting: "YoDaAI is damaged"
 
-If you see this error, it's just macOS Gatekeeper being cautious. The app is **not** actually damaged.
+If you see this error, it is just macOS Gatekeeper being cautious. The app is **not** actually damaged.
 
-**Quick fix:**
-\`\`\`bash
-xattr -cr /Applications/YoDaAI.app
-\`\`\`
+**Quick fix:** Run in Terminal: xattr -cr /Applications/YoDaAI.app
 
 **Alternative:** Right-click YoDaAI → Open → Click "Open" in the dialog.
 
