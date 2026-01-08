@@ -91,9 +91,12 @@ YoDaAI/
 ## Build Commands
 
 ```bash
-# Build the project
+# Build the project (Debug)
 cd /Users/i329817/SAPDevelop/workspace/YoDaAI
 xcodebuild -scheme YoDaAI -configuration Debug build
+
+# Build Release configuration
+xcodebuild -scheme YoDaAI -configuration Release build
 
 # Build and check for errors only
 xcodebuild -scheme YoDaAI -configuration Debug build 2>&1 | grep -E "(error:|warning:|BUILD)"
@@ -101,6 +104,80 @@ xcodebuild -scheme YoDaAI -configuration Debug build 2>&1 | grep -E "(error:|war
 # Clean build
 xcodebuild -scheme YoDaAI -configuration Debug clean build
 ```
+
+## Release Process
+
+YoDaAI has an automated release script that handles the entire release workflow:
+
+### Quick Release
+
+```bash
+./release.sh
+```
+
+This single command will:
+1. Check for uncommitted changes
+2. Show current version and ask for bump type (patch/minor/major)
+3. Generate changelog from git commits since last tag
+4. Update version in Info.plist
+5. Build Release configuration
+6. Create ZIP and DMG artifacts
+7. Create git tag
+8. Push to GitHub
+9. Create GitHub release with artifacts via API
+10. Open release page in browser
+
+### Setup (One-time)
+
+Before first use, set up GitHub token:
+
+```bash
+# Install jq for JSON processing
+brew install jq
+
+# Add GitHub token to ~/.zshrc
+echo 'export GITHUB_TOKEN="ghp_your_token_here"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Get GitHub token from: https://github.com/settings/tokens (needs `repo` scope)
+
+### Release Files
+
+The script creates:
+- **releases/YoDaAI-X.Y.Z.zip** - ZIP archive for download
+- **releases/YoDaAI-X.Y.Z.dmg** - Professional disk image with Applications symlink
+- **Git tag** - vX.Y.Z
+- **GitHub release** - With auto-generated changelog and artifacts
+
+### Version Bumping
+
+The script supports semantic versioning:
+- **Patch** (0.1.0 → 0.1.1): Bug fixes, minor improvements
+- **Minor** (0.1.0 → 0.2.0): New features, backward compatible
+- **Major** (0.1.0 → 1.0.0): Breaking changes
+- **Custom**: Specify exact version (e.g., 1.0.0-beta.1)
+
+### Changelog Generation
+
+The script automatically generates changelogs from commit messages since the last git tag. Write clear commit messages for better changelogs:
+
+**Good commit messages:**
+```
+Add /settings slash command to open settings window
+Fix Automation permission dialog not appearing
+Improve content capture for Safari
+```
+
+**Conventional commits (recommended):**
+```
+feat: add /settings slash command
+fix: automation permission dialog not appearing
+perf: improve content capture for Safari
+docs: add quickstart guide for permissions
+```
+
+See [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for detailed documentation.
 
 ## Architecture Notes
 

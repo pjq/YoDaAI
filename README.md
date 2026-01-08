@@ -126,6 +126,105 @@ Any OpenAI-compatible API, including:
 - **Web-based content** in browsers may not expose text via accessibility APIs
 - Accessibility permission requires manual grant in System Settings
 
+## Development
+
+### Building from Source
+
+```bash
+git clone https://github.com/pjq/YoDaAI.git
+cd YoDaAI
+open YoDaAI.xcodeproj
+```
+
+Build with Xcode (⌘B) or command line:
+
+```bash
+# Debug build
+xcodebuild -scheme YoDaAI -configuration Debug build
+
+# Release build
+xcodebuild -scheme YoDaAI -configuration Release build
+```
+
+### Creating Releases
+
+YoDaAI includes an automated release script that handles everything with one command:
+
+```bash
+./release.sh
+```
+
+#### One-Time Setup
+
+1. **Install jq** (JSON processor):
+   ```bash
+   brew install jq
+   ```
+
+2. **Create GitHub Personal Access Token**:
+   - Go to https://github.com/settings/tokens
+   - Generate new token (classic) with `repo` scope
+   - Copy the token
+
+3. **Add token to ~/.zshrc**:
+   ```bash
+   echo 'export GITHUB_TOKEN="ghp_your_token_here"' >> ~/.zshrc
+   source ~/.zshrc
+   ```
+
+4. **Verify setup**:
+   ```bash
+   jq --version
+   echo $GITHUB_TOKEN
+   ```
+
+#### Release Process
+
+Run the release script:
+
+```bash
+./release.sh
+```
+
+The script will:
+1. ✅ Check for uncommitted changes
+2. ✅ Ask you to choose version bump (patch/minor/major)
+3. ✅ Generate changelog from git commits
+4. ✅ Update version in Info.plist
+5. ✅ Build Release configuration
+6. ✅ Create ZIP and DMG artifacts
+7. ✅ Create git tag and push to GitHub
+8. ✅ Create GitHub release with artifacts
+9. ✅ Open release page in browser
+
+**Example:**
+```bash
+$ ./release.sh
+
+Current version: 0.0.0
+
+Select version bump type:
+1) Patch (0.0.0 → 0.0.1)
+2) Minor (0.0.0 → 0.1.0)
+3) Major (0.0.0 → 1.0.0)
+4) Custom version
+Enter choice [1-4]: 2
+
+Proceed with release v0.1.0? [y/N]: y
+
+✓ Release v0.1.0 published successfully!
+```
+
+See [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for detailed documentation.
+
+#### Semantic Versioning
+
+YoDaAI follows [Semantic Versioning](https://semver.org/):
+
+- **MAJOR**: Breaking changes (1.0.0 → 2.0.0)
+- **MINOR**: New features, backward compatible (0.1.0 → 0.2.0)
+- **PATCH**: Bug fixes, improvements (0.1.0 → 0.1.1)
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
