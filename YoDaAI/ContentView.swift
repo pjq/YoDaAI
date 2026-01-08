@@ -306,11 +306,22 @@ private struct ChatDetailView: View {
                 print("[SlashCommand] Clear: thread is nil")
                 return
             }
-            print("[SlashCommand] Clear: deleting \(thread.messages.count) messages")
-            for message in thread.messages {
+            let messageCount = thread.messages.count
+            print("[SlashCommand] Clear: deleting \(messageCount) messages")
+
+            // Delete all messages
+            let messagesToDelete = Array(thread.messages)
+            for message in messagesToDelete {
                 modelContext.delete(message)
             }
-            try? modelContext.save()
+
+            // Save changes
+            do {
+                try modelContext.save()
+                print("[SlashCommand] Clear: successfully deleted \(messageCount) messages")
+            } catch {
+                print("[SlashCommand] Clear: error saving: \(error)")
+            }
         }
 
         // New command - create new chat
@@ -325,10 +336,11 @@ private struct ChatDetailView: View {
             showModelPicker = true
         }
 
-        // Settings command - open settings
+        // Settings command - open settings using macOS standard method
         viewModel.onSettingsCommand = {
             print("[SlashCommand] Settings handler called")
-            onOpenAPIKeysSettings()
+            // Use macOS standard way to open settings (Cmd+,)
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
 
         // Copy command - copy conversation to clipboard
