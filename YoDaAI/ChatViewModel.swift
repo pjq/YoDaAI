@@ -1156,13 +1156,14 @@ final class ChatViewModel: ObservableObject {
 
         print("[SlashCommand] Executing command: \(command.displayName)")
 
-        // Clear composer after detecting command
-        composerText = ""
-        showSlashCommandPicker = false
-
         // Execute command asynchronously to avoid "Publishing changes during view update" errors
+        // IMPORTANT: All state changes must happen inside the async block
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+
+            // Clear composer AFTER view update completes
+            self.composerText = ""
+            self.showSlashCommandPicker = false
 
             switch command {
             case .help:
