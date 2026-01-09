@@ -1177,9 +1177,26 @@ final class ChatViewModel: ObservableObject {
         if snapshot.focusedIsSecure {
             parts.append("🔒 Secure field (content hidden)")
         } else if let content = snapshot.focusedValuePreview, !content.isEmpty {
-            parts.append("Content: \(content)")
+            // Check if it's just placeholder text (common in Electron apps)
+            let lowerContent = content.lowercased()
+            if lowerContent.contains("type a message") ||
+               lowerContent.contains("type here") ||
+               lowerContent.contains("start typing") {
+                parts.append("⚠️ Limited capture: \(content)")
+                parts.append("💡 Tip: Select text first, or check permissions")
+            } else {
+                parts.append("Content: \(content)")
+            }
         } else {
-            parts.append("ℹ️ No content captured (grant Accessibility permission)")
+            // No content - provide helpful hint based on app
+            let bundleId = snapshot.bundleIdentifier.lowercased()
+            if bundleId.contains("chrome") || bundleId.contains("safari") || bundleId.contains("brave") {
+                parts.append("ℹ️ Grant Automation permission for full page content")
+            } else if bundleId.contains("teams") || bundleId.contains("slack") || bundleId.contains("discord") {
+                parts.append("ℹ️ Electron app - select text first for better capture")
+            } else {
+                parts.append("ℹ️ No content captured (check Accessibility permission)")
+            }
         }
 
         return parts.joined(separator: "\n")
