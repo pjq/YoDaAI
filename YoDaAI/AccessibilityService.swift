@@ -42,7 +42,10 @@ struct RunningApp: Identifiable, Hashable, Sendable {
 
 @MainActor
 final class AccessibilityService {
-    
+
+    // Track if we've already prompted for Accessibility permission
+    private var hasPromptedForAccessibility = false
+
     // MARK: - Private Helpers for Timeout
     
     /// Set timeout on an AXUIElement to prevent hangs
@@ -381,9 +384,10 @@ final class AccessibilityService {
         print("[AccessibilityService] Accessibility permission: \(hasAccessibility ? "granted" : "NOT granted")")
         
         if !hasAccessibility {
-            // Open System Settings to Accessibility pane
-            if promptIfNeeded {
-                print("[AccessibilityService] Opening System Settings for Accessibility...")
+            // Open System Settings to Accessibility pane (only once per session)
+            if promptIfNeeded && !hasPromptedForAccessibility {
+                print("[AccessibilityService] Opening System Settings for Accessibility (first time)...")
+                hasPromptedForAccessibility = true
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                     NSWorkspace.shared.open(url)
                 }
