@@ -50,6 +50,10 @@ final class ContentCacheService: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var isCapturing: Bool = false  // Prevent overlapping captures
     private let accessibilityService = AccessibilityService()
+
+    // Track apps we've already prompted for Automation permission (per session)
+    // Prevents System Settings from opening repeatedly
+    private var hasPromptedAutomationFor: Set<String> = []
     
     private init() {
         setupWorkspaceObserver()
@@ -439,10 +443,17 @@ final class ContentCacheService: ObservableObject {
             case -1743:
                 print("[ContentCacheService] ⚠️ Error -1743: YoDaAI needs Automation permission for \(appName)")
                 print("[ContentCacheService] Please grant permission in: System Settings → Privacy & Security → Automation")
-                DispatchQueue.main.async {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-                        NSWorkspace.shared.open(url)
+                // Only open System Settings once per app (per session)
+                if !hasPromptedAutomationFor.contains(bundleIdentifier) {
+                    hasPromptedAutomationFor.insert(bundleIdentifier)
+                    print("[ContentCacheService] Opening System Settings for Automation (first time for \(appName))...")
+                    DispatchQueue.main.async {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
+                } else {
+                    print("[ContentCacheService] Already prompted for \(appName) this session, skipping System Settings")
                 }
             case -1728:
                 print("[ContentCacheService] ⚠️ Error -1728: \(appName) may not support this AppleScript command")
