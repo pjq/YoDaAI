@@ -384,8 +384,68 @@ EOF
     echo "$release_url"
 }
 
+# Show usage
+show_usage() {
+    cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+    -t, --type TYPE       Version bump type: patch, minor, major
+    -v, --version VERSION Custom version number (e.g., 1.2.3)
+    -y, --yes            Skip confirmation prompt
+    -h, --help           Show this help message
+
+Examples:
+    $0 --type minor --yes          # Bump minor version without confirmation
+    $0 -t patch -y                 # Bump patch version without confirmation
+    $0 -v 1.0.0 --yes              # Release specific version
+    $0                             # Interactive mode (default)
+
+EOF
+}
+
+# Parse command-line arguments
+parse_args() {
+    BUMP_TYPE=""
+    CUSTOM_VERSION=""
+    AUTO_CONFIRM=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -t|--type)
+                BUMP_TYPE="$2"
+                if [[ ! "$BUMP_TYPE" =~ ^(patch|minor|major)$ ]]; then
+                    print_error "Invalid bump type: $BUMP_TYPE. Must be patch, minor, or major."
+                    exit 1
+                fi
+                shift 2
+                ;;
+            -v|--version)
+                CUSTOM_VERSION="$2"
+                shift 2
+                ;;
+            -y|--yes)
+                AUTO_CONFIRM=true
+                shift
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
 # Main release process
 main() {
+    # Parse command-line arguments
+    parse_args "$@"
+
     print_header "YoDaAI Release Automation"
 
     # Check if in git repo
@@ -404,33 +464,39 @@ main() {
     local current_version=$(get_current_version)
     print_info "Current version: ${current_version}"
 
-    # Ask for bump type
-    echo -e "\n${YELLOW}Select version bump type:${NC}"
-    echo "1) Patch (${current_version} → $(bump_version $current_version patch))"
-    echo "2) Minor (${current_version} → $(bump_version $current_version minor))"
-    echo "3) Major (${current_version} → $(bump_version $current_version major))"
-    echo "4) Custom version"
-    read -p "Enter choice [1-4]: " choice
+    local new_version=""
 
-    case $choice in
-        1) bump_type="patch" ;;
-        2) bump_type="minor" ;;
-        3) bump_type="major" ;;
-        4)
-            read -p "Enter custom version (e.g., 1.2.3): " new_version
-            ;;
-        *)
-            print_error "Invalid choice"
-            exit 1
-            ;;
-    esac
+    # Determine version based on arguments or interactive input
+    if [ -n "$CUSTOM_VERSION" ]; then
+        new_version="$CUSTOM_VERSION"
+        print_info "Using custom version: ${new_version}"
+    elif [ -n "$BUMP_TYPE" ]; then
+        new_version=$(bump_version $current_version $BUMP_TYPE)
+        print_info "Bumping $BUMP_TYPE version: ${current_version} → ${new_version}"
+    else
+        # Interactive mode
+        echo -e "\n${YELLOW}Select version bump type:${NC}"
+        echo "1) Patch (${current_version} → $(bump_version $current_version patch))"
+        echo "2) Minor (${current_version} → $(bump_version $current_version minor))"
+        echo "3) Major (${current_version} → $(bump_version $current_version major))"
+        echo "4) Custom version"
+        read -p "Enter choice [1-4]: " choice
 
-    # Calculate new version
-    if [ -z "$new_version" ]; then
-        new_version=$(bump_version $current_version $bump_type)
+        case $choice in
+            1) new_version=$(bump_version $current_version patch) ;;
+            2) new_version=$(bump_version $current_version minor) ;;
+            3) new_version=$(bump_version $current_version major) ;;
+            4)
+                read -p "Enter custom version (e.g., 1.2.3): " new_version
+                ;;
+            *)
+                print_error "Invalid choice"
+                exit 1
+                ;;
+        esac
+
+        print_info "New version: ${new_version}"
     fi
-
-    print_info "New version: ${new_version}"
 
     # Generate changelog
     print_info "Generating changelog..."
@@ -439,12 +505,16 @@ main() {
     echo -e "\n${YELLOW}Changelog:${NC}"
     echo "$changelog"
 
-    # Confirm
-    echo ""
-    read -p "Proceed with release v${new_version}? [y/N]: " confirm
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        print_info "Release cancelled"
-        exit 0
+    # Confirm (skip if --yes flag is set)
+    if [ "$AUTO_CONFIRM" = false ]; then
+        echo ""
+        read -p "Proceed with release v${new_version}? [y/N]: " confirm
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            print_info "Release cancelled"
+            exit 0
+        fi
+    else
+        print_info "Auto-confirming release (--yes flag set)"
     fi
 
     # Update version
