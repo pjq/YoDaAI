@@ -375,6 +375,7 @@ final class ChatViewModel: ObservableObject {
                 context.insert(userMessage)
 
                 // Save images to disk and create attachments
+                // Note: saveImage is synchronous I/O - consider making it async in future
                 for pendingImage in imagesToSend {
                     try Task.checkCancellation()
 
@@ -710,20 +711,19 @@ final class ChatViewModel: ObservableObject {
                 fullResponseWithToolCalls += chunk
             } else {
                 // Normal streaming to UI
+                // PERFORMANCE FIX: Don't save on every chunk - just update in-memory
+                // SwiftData's @Observable will automatically trigger UI updates
                 assistantMessage.content += chunk
                 chunkCount += 1
 
-                // Batch save every 20 chunks to avoid blocking UI
-                if chunkCount % 20 == 0 {
-                    try context.save()
-                }
+                // NO intermediate saves during streaming - they block the UI!
+                // We'll save once at the end after all chunks are received
             }
         }
 
         // Final save after streaming completes
-        if !detectedToolCallDuringStream {
-            try context.save()
-        }
+        // PERFORMANCE FIX: Only save once after all streaming is done
+        try context.save()
 
         // If we detected tool calls during streaming, execute them
         if detectedToolCallDuringStream {
@@ -912,14 +912,12 @@ final class ChatViewModel: ObservableObject {
         do {
             for try await chunk in stream {
                 try Task.checkCancellation()
+                // PERFORMANCE FIX: Just update content, no intermediate saves
                 assistantMessage.content += chunk
                 totalContent += chunk
                 chunkCount += 1
 
-                // Batch save every 20 chunks to avoid blocking UI
-                if chunkCount % 20 == 0 {
-                    try context.save()
-                }
+                // NO intermediate saves - they block the UI!
             }
         } catch {
             streamError = error

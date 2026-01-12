@@ -4,7 +4,7 @@ import Combine
 
 // MARK: - Timeout Configuration
 private let kAppleScriptTimeout: TimeInterval = 5.0
-private let kCaptureInterval: TimeInterval = 5.0  // Increased from 3 to reduce overhead
+private let kCaptureInterval: TimeInterval = 15.0  // PERFORMANCE FIX: Increased from 5 to 15 seconds to reduce overhead and prevent UI freezing
 
 /// Cached content from an app
 struct CachedAppContent: Sendable {
