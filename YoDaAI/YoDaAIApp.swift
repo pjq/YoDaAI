@@ -222,13 +222,13 @@ struct AppSettingsView: View {
             Group {
                 switch settingsRouter.selectedTab {
                 case .general:
-                    GeneralSettingsContent(viewModel: viewModel)
+                    GeneralSettingsView(viewModel: viewModel)
                 case .apiKeys:
-                    APIKeysSettingsContent()
+                    APIKeysSettingsView()
                 case .mcpServers:
-                    MCPServersSettingsContent()
+                    MCPServersSettingsView()
                 case .permissions:
-                    PermissionsSettingsContent()
+                    PermissionsSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
