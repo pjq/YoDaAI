@@ -35,30 +35,39 @@ struct ComposerView: View {
                 }
 
                 // Text Input with popovers
-                ZStack(alignment: .top) {
-                    TextField("Ask anything, @ to mention apps, / for commands", text: $viewModel.composerText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...8)
-                        .font(.system(size: 14 * scaleManager.scale))
-                        .focused($isFocused)
-                        .onChange(of: viewModel.composerText) { _, newValue in
-                            // Check if user typed @
-                            if newValue.hasSuffix("@") {
-                                viewModel.showMentionPicker = true
-                                viewModel.mentionSearchText = ""
+                ZStack(alignment: .topLeading) {
+                    // Placeholder text
+                    if viewModel.composerText.isEmpty {
+                        Text("Ask anything, @ to mention apps, / for commands")
+                            .font(.system(size: 14 * scaleManager.scale))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+
+                    // Scrollable text editor with keyboard handling
+                    ScrollView {
+                        TextEditor(text: $viewModel.composerText)
+                            .font(.system(size: 14 * scaleManager.scale))
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 20, maxHeight: 150)
+                            .focused($isFocused)
+                            .onChange(of: viewModel.composerText) { _, newValue in
+                                // Check if user typed @
+                                if newValue.hasSuffix("@") {
+                                    viewModel.showMentionPicker = true
+                                    viewModel.mentionSearchText = ""
+                                }
+                                // Check if user typed / for slash commands
+                                viewModel.updateSlashCommandAutocomplete()
                             }
-                            // Check if user typed / for slash commands
-                            viewModel.updateSlashCommandAutocomplete()
-                        }
-                        .onSubmit {
-                            if !viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty && !NSEvent.modifierFlags.contains(.shift) {
-                                sendMessage()
+                            .background(PasteInterceptor(onPaste: handleDirectPaste))
+                            .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+                                return handleDrop(providers: providers)
                             }
-                        }
-                        .background(PasteInterceptor(onPaste: handleDirectPaste))
-                        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
-                            return handleDrop(providers: providers)
-                        }
+                    }
+                    .frame(maxHeight: 150)
                 }
                 .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .bottom) {
                     MentionPickerPopover(viewModel: viewModel)
@@ -151,7 +160,7 @@ struct ComposerView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(!canSend)
-                        .keyboardShortcut(.return, modifiers: .command)
+                        .help("Send message (Cmd+Return)")
                     }
                 }
             }
@@ -163,6 +172,16 @@ struct ComposerView: View {
             if viewModel.isSending {
                 viewModel.stopGenerating()
                 return .handled
+            }
+            return .ignored
+        }
+        .onKeyPress { press in
+            // Handle Cmd+Return to send message
+            if press.key == .return && press.modifiers.contains(.command) {
+                if canSend {
+                    sendMessage()
+                    return .handled
+                }
             }
             return .ignored
         }
