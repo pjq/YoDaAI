@@ -613,7 +613,21 @@ final class AccessibilityService {
                 end tell
             end tell
             """
-            
+
+        case "com.microsoft.teams2", "com.microsoft.teams", "com.microsoft.Teams":
+            // Teams: Limited AppleScript support, mainly window info
+            script = """
+            tell application "System Events"
+                tell process "Microsoft Teams"
+                    if (count of windows) is 0 then
+                        return ""
+                    end if
+                    set windowName to name of front window
+                    return windowName
+                end tell
+            end tell
+            """
+
         default:
             // For unsupported apps, return nil to try other methods
             print("[AccessibilityService] No AppleScript support for: \(bundleIdentifier)")
@@ -948,35 +962,62 @@ final class AccessibilityService {
     private func extractAllText(from element: AXUIElement, into contents: inout [String], depth: Int, maxTotal: Int = 4000) {
         guard depth < kMaxTreeDepth else { return } // Reduced depth for performance
         guard contents.joined().count < maxTotal else { return }
-        
+
         // Set timeout on each element we process
         setAXTimeout(for: element)
-        
-        // Get role
+
+        // Get role and identifier
         let role = copyAXString(element, attribute: kAXRoleAttribute)
-        
-        // Try to get text value
-        if let value = copyAXString(element, attribute: kAXValueAttribute) {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.count > 3 && !contents.contains(where: { $0.contains(trimmed) || trimmed.contains($0) }) {
-                contents.append(trimmed)
-                print("[AccessibilityService] Found text (\(role ?? "unknown")): \(trimmed.prefix(50))...")
-            }
-        }
-        
-        // For text elements, also check title and description
-        if role == "AXStaticText" || role == "AXTextField" || role == "AXTextArea" {
-            if let title = copyAXString(element, attribute: kAXTitleAttribute) {
-                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.count > 3 && !contents.contains(where: { $0.contains(trimmed) }) {
+        let identifier = copyAXString(element, attribute: kAXIdentifierAttribute as String)
+
+        // Skip UI framework identifiers (common in Electron apps)
+        // These are internal React/Electron component identifiers, not user content
+        let skipIdentifiers = [
+            "messageHeaderFromContent",
+            "messageHeaderRecipientsContent",
+            "messageBody",
+            "messageHeader",
+            "toolbar",
+            "sidebar",
+            "navigation",
+            "button",
+            "icon"
+        ]
+
+        if let id = identifier, skipIdentifiers.contains(where: { id.lowercased().contains($0.lowercased()) }) {
+            // This is a UI framework identifier, skip the value but still recurse
+            // to get child content
+        } else {
+            // Try to get text value
+            if let value = copyAXString(element, attribute: kAXValueAttribute) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Filter out UI identifiers that look like camelCase variable names
+                let looksLikeIdentifier = trimmed.range(of: "^[a-z][a-zA-Z]+Content$", options: .regularExpression) != nil ||
+                                        trimmed.range(of: "^[a-z][a-zA-Z]+Header$", options: .regularExpression) != nil ||
+                                        trimmed.range(of: "^[a-z][a-zA-Z]+Footer$", options: .regularExpression) != nil
+
+                if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) || trimmed.contains($0) }) {
                     contents.append(trimmed)
+                    print("[AccessibilityService] Found text (\(role ?? "unknown")): \(trimmed.prefix(50))...")
                 }
             }
-            // Also try description attribute
-            if let desc = copyAXString(element, attribute: kAXDescriptionAttribute as String) {
-                let trimmed = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.count > 3 && !contents.contains(where: { $0.contains(trimmed) }) {
-                    contents.append(trimmed)
+
+            // For text elements, also check title and description
+            if role == "AXStaticText" || role == "AXTextField" || role == "AXTextArea" {
+                if let title = copyAXString(element, attribute: kAXTitleAttribute) {
+                    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let looksLikeIdentifier = trimmed.range(of: "^[a-z][a-zA-Z]+Content$", options: .regularExpression) != nil
+                    if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) }) {
+                        contents.append(trimmed)
+                    }
+                }
+                // Also try description attribute
+                if let desc = copyAXString(element, attribute: kAXDescriptionAttribute as String) {
+                    let trimmed = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let looksLikeIdentifier = trimmed.range(of: "^[a-z][a-zA-Z]+Content$", options: .regularExpression) != nil
+                    if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) }) {
+                        contents.append(trimmed)
+                    }
                 }
             }
         }
