@@ -4,7 +4,7 @@ import Combine
 
 // MARK: - Timeout Configuration
 private let kAppleScriptTimeout: TimeInterval = 5.0
-private let kCaptureInterval: TimeInterval = 15.0  // PERFORMANCE FIX: Increased from 5 to 15 seconds to reduce overhead and prevent UI freezing
+private let kCaptureInterval: TimeInterval = 30.0  // PERFORMANCE FIX: Increased from 5→15→30 seconds to minimize overhead
 
 /// Cached content from an app
 struct CachedAppContent: Sendable {
@@ -71,17 +71,18 @@ final class ContentCacheService: ObservableObject {
     /// Start continuous background capture
     func startCapturing() {
         guard captureTimer == nil else { return }
-        
+
         print("[ContentCacheService] Starting continuous capture...")
-        
+
         // Capture immediately
         Task {
             await captureCurrentForegroundApp()
         }
-        
-        // Set up periodic capture
+
+        // PERFORMANCE: Set up periodic capture with lower priority to reduce main thread impact
+        // The timer itself runs on main thread but immediately dispatches work to background
         captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            Task(priority: .utility) { @MainActor [weak self] in
                 await self?.captureCurrentForegroundApp()
             }
         }

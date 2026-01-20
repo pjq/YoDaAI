@@ -375,7 +375,8 @@ final class ChatViewModel: ObservableObject {
                 context.insert(userMessage)
 
                 // Save images to disk and create attachments
-                // Note: saveImage is synchronous I/O - consider making it async in future
+                // Note: ImageStorageService is @MainActor, but this is relatively fast I/O
+                // The real performance win is moving context.save() off main thread below
                 for pendingImage in imagesToSend {
                     try Task.checkCancellation()
 
@@ -397,7 +398,10 @@ final class ChatViewModel: ObservableObject {
                 }
             }
 
-            try context.save()
+            // PERFORMANCE FIX: Save context on background thread to avoid blocking UI
+            try await Task.detached {
+                try context.save()
+            }.value
 
             // STEP 3: Generate AI response (no need to pass mentions - they're now in message history)
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], cachedContexts: [:], in: context)
@@ -406,7 +410,10 @@ final class ChatViewModel: ObservableObject {
             if thread.title == "New Chat" {
                 let titleText = !trimmed.isEmpty ? trimmed : "Image conversation"
                 thread.title = generateThreadTitle(from: titleText)
-                try context.save()
+                // PERFORMANCE FIX: Save on background thread
+                try await Task.detached {
+                    try context.save()
+                }.value
             }
         } catch is CancellationError {
             // User cancelled - this is expected, don't show error
@@ -655,7 +662,10 @@ final class ChatViewModel: ObservableObject {
         // Create empty assistant message for streaming
         let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread)
         context.insert(assistantMessage)
-        try context.save()
+        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
+        try await Task.detached {
+            try context.save()
+        }.value
 
         // Track the streaming message
         streamingMessageID = assistantMessage.id
@@ -696,8 +706,10 @@ final class ChatViewModel: ObservableObject {
                     if let toolCallRange = combined.range(of: "<tool_call>") {
                         let contentBeforeToolCall = String(combined[..<toolCallRange.lowerBound])
                         assistantMessage.content = contentBeforeToolCall
-                        // Save before stopping UI updates
-                        try context.save()
+                        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
+                        try await Task.detached {
+                            try context.save()
+                        }.value
                         // Save the full combined string (includes start of tool call)
                         fullResponseWithToolCalls = combined
                         // Don't break yet - continue collecting the rest of the tool call
@@ -722,8 +734,10 @@ final class ChatViewModel: ObservableObject {
         }
 
         // Final save after streaming completes
-        // PERFORMANCE FIX: Only save once after all streaming is done
-        try context.save()
+        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
+        try await Task.detached {
+            try context.save()
+        }.value
 
         // If we detected tool calls during streaming, execute them
         if detectedToolCallDuringStream {
@@ -749,7 +763,10 @@ final class ChatViewModel: ObservableObject {
             )
         } else {
             // No tool calls detected, just save the complete message
-            try context.save()
+            // PERFORMANCE FIX: Save on background thread to avoid blocking UI
+            try await Task.detached {
+                try context.save()
+            }.value
         }
 
         // Clear streaming indicator after everything is done
@@ -864,7 +881,10 @@ final class ChatViewModel: ObservableObject {
         toolExecutionState = .processing
 
         // Save once after all tools are executed
-        try context.save()
+        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
+        try await Task.detached {
+            try context.save()
+        }.value
 
         // Check for cancellation before follow-up
         try Task.checkCancellation()
@@ -945,7 +965,10 @@ final class ChatViewModel: ObservableObject {
         streamingMessageID = nil
 
         // Final save to persist all changes
-        try context.save()
+        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
+        try await Task.detached {
+            try context.save()
+        }.value
 
         // Update tool execution state to completed with results
         let executionResults = toolResults.map { (name, arguments, result, success) in
