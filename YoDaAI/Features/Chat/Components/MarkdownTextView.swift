@@ -51,6 +51,7 @@ private struct CustomCodeBlockView: View {
                     Spacer()
                     // Empty space for the button overlay
                     Color.clear.frame(width: 80, height: 24)
+                        .allowsHitTesting(false)  // Don't block button clicks
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -66,6 +67,7 @@ private struct CustomCodeBlockView: View {
             }
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .textSelection(.disabled)  // Disable text selection on code blocks (use copy button instead)
 
             // Copy button as an overlay - outside the text selection context
             CopyButtonView(
