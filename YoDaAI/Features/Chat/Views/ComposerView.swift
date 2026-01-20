@@ -46,28 +46,25 @@ struct ComposerView: View {
                             .allowsHitTesting(false)
                     }
 
-                    // Scrollable text editor with keyboard handling
-                    ScrollView {
-                        TextEditor(text: $viewModel.composerText)
-                            .font(.system(size: 14 * scaleManager.scale))
-                            .scrollContentBackground(.hidden)
-                            .frame(minHeight: 20, maxHeight: 150)
-                            .focused($isFocused)
-                            .onChange(of: viewModel.composerText) { _, newValue in
-                                // Check if user typed @
-                                if newValue.hasSuffix("@") {
-                                    viewModel.showMentionPicker = true
-                                    viewModel.mentionSearchText = ""
-                                }
-                                // Check if user typed / for slash commands
-                                viewModel.updateSlashCommandAutocomplete()
+                    // Scrollable text editor
+                    TextEditor(text: $viewModel.composerText)
+                        .font(.system(size: 14 * scaleManager.scale))
+                        .scrollContentBackground(.hidden)
+                        .frame(height: max(24, textEditorHeight))
+                        .focused($isFocused)
+                        .onChange(of: viewModel.composerText) { _, newValue in
+                            // Check if user typed @
+                            if newValue.hasSuffix("@") {
+                                viewModel.showMentionPicker = true
+                                viewModel.mentionSearchText = ""
                             }
-                            .background(PasteInterceptor(onPaste: handleDirectPaste))
-                            .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
-                                return handleDrop(providers: providers)
-                            }
-                    }
-                    .frame(maxHeight: 150)
+                            // Check if user typed / for slash commands
+                            viewModel.updateSlashCommandAutocomplete()
+                        }
+                        .background(PasteInterceptor(onPaste: handleDirectPaste))
+                        .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+                            return handleDrop(providers: providers)
+                        }
                 }
                 .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .bottom) {
                     MentionPickerPopover(viewModel: viewModel)
@@ -160,7 +157,7 @@ struct ComposerView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(!canSend)
-                        .help("Send message (Cmd+Return)")
+                        .help("Send message (Return, Shift+Return for new line)")
                     }
                 }
             }
@@ -176,12 +173,19 @@ struct ComposerView: View {
             return .ignored
         }
         .onKeyPress { press in
-            // Handle Cmd+Return to send message
-            if press.key == .return && press.modifiers.contains(.command) {
+            // Handle Return to send message (Shift+Return adds new line)
+            if press.key == .return {
+                // If Shift is pressed, allow new line (return .ignored to let TextEditor handle it)
+                if press.modifiers.contains(.shift) {
+                    return .ignored
+                }
+                // Otherwise send the message
                 if canSend {
                     sendMessage()
                     return .handled
                 }
+                // If can't send, don't add new line
+                return .handled
             }
             return .ignored
         }
@@ -190,6 +194,16 @@ struct ComposerView: View {
     private var canSend: Bool {
         // Allow sending with images even if text is empty
         !viewModel.isSending && (!viewModel.composerText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty || !viewModel.pendingImages.isEmpty)
+    }
+
+    private var textEditorHeight: CGFloat {
+        // Calculate height based on number of lines (approximate)
+        let lineCount = max(1, viewModel.composerText.split(separator: "\n").count)
+        let lineHeight: CGFloat = 20 * scaleManager.scale
+        let padding: CGFloat = 8
+        let calculatedHeight = CGFloat(lineCount) * lineHeight + padding
+        // Cap at 150px for scrolling
+        return min(calculatedHeight, 150)
     }
 
     private func sendMessage() {
