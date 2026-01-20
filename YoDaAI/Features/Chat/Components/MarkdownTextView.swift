@@ -16,7 +16,7 @@ struct MarkdownTextView: View {
             .font(.system(size: 14 * scaleManager.scale))
             .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
             .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
-            .textSelection(.enabled)  // Enable text selection for user content
+            .textual.textSelection(.enabled)  // Enable text selection using Textual's modifier
     }
 }
 

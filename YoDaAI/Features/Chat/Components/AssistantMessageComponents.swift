@@ -128,7 +128,6 @@ struct AssistantMessageContentView: View {
                 case .text(let text):
                     if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         MarkdownTextView(content: text)
-                            .textSelection(.enabled)
                     }
 
                 case .toolCall(let name, let args):
