@@ -36,14 +36,13 @@ struct ComposerView: View {
                 }
 
                 // Text Input with popovers
-                ZStack(alignment: .topLeading) {
-                    // Placeholder text - positioned to match TextEditor's internal text position
+                ZStack(alignment: .leading) {
+                    // Placeholder text - positioned to match TextEditor's cursor position
                     if viewModel.composerText.isEmpty {
                         Text("Ask anything, @ to mention apps, / for commands")
                             .font(.system(size: 14 * scaleManager.scale))
                             .foregroundStyle(.secondary)
                             .padding(.leading, 5)
-                            .padding(.top, 8)
                             .allowsHitTesting(false)
                     }
 
