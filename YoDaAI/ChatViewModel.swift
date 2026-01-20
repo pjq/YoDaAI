@@ -505,7 +505,16 @@ final class ChatViewModel: ObservableObject {
     
     private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], cachedContexts: [String: AppContextSnapshot] = [:], in context: ModelContext) async throws {
         let settings = LLMSettings.shared
+
+        // Fetch messages with relationships loaded to avoid SwiftData faults
+        // Use thread.messages but force evaluation to ensure attachments are loaded
         let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
+
+        // Force-load attachments relationship by accessing it in a safe way
+        for message in history {
+            // This forces SwiftData to load the relationship if not already loaded
+            _ = message.attachments.count
+        }
 
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
