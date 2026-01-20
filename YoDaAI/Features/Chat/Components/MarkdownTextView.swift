@@ -61,6 +61,7 @@ private struct CustomCodeBlockView: View {
                 configuration.label
                     .textual.lineSpacing(.fontScaled(0.39))
                     .textual.fontScale(0.882 * scaleManager.scale)
+                    .textual.textSelection(.disabled)  // Disable text selection using Textual's modifier
                     .fixedSize(horizontal: false, vertical: true)
                     .monospaced()
                     .padding(12)
@@ -69,17 +70,24 @@ private struct CustomCodeBlockView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .textSelection(.disabled)  // Disable text selection on code blocks (use copy button instead)
 
-            // Copy button as an overlay - outside the text selection context
-            CopyButtonView(
-                isCopied: $isCopied,
-                scaleManager: scaleManager,
-                onCopy: {
-                    configuration.codeBlock.copyToPasteboard()
-                }
-            )
+            // Copy button as an overlay - create a larger hit area that blocks text selection
+            ZStack {
+                // Invisible blocking area to prevent text selection on button
+                Color.clear
+                    .frame(width: 50, height: 50)
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+
+                CopyButtonView(
+                    isCopied: $isCopied,
+                    scaleManager: scaleManager,
+                    onCopy: {
+                        configuration.codeBlock.copyToPasteboard()
+                    }
+                )
+            }
             .padding(.top, 8)
             .padding(.trailing, 12)
-            .allowsHitTesting(true)  // Ensure button receives clicks
             .zIndex(1000)  // Ensure button is on top of text selection
         }
     }
@@ -114,8 +122,7 @@ private struct CopyButtonView: View {
                 .cornerRadius(4)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .allowsHitTesting(true)  // Explicitly allow button to receive events
+        .buttonStyle(.borderless)  // Use borderless for better click detection
         .onHover { hovering in
             if hovering {
                 NSCursor.pointingHand.push()
