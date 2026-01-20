@@ -399,9 +399,10 @@ final class ChatViewModel: ObservableObject {
             }
 
             // PERFORMANCE FIX: Save context on background thread to avoid blocking UI
-            try await Task.detached {
+            // Note: We don't wait for save to complete to keep UI responsive
+            Task.detached {
                 try context.save()
-            }.value
+            }
 
             // STEP 3: Generate AI response (no need to pass mentions - they're now in message history)
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], cachedContexts: [:], in: context)
@@ -410,10 +411,10 @@ final class ChatViewModel: ObservableObject {
             if thread.title == "New Chat" {
                 let titleText = !trimmed.isEmpty ? trimmed : "Image conversation"
                 thread.title = generateThreadTitle(from: titleText)
-                // PERFORMANCE FIX: Save on background thread
-                try await Task.detached {
+                // PERFORMANCE FIX: Save on background thread (fire and forget)
+                Task.detached {
                     try context.save()
-                }.value
+                }
             }
         } catch is CancellationError {
             // User cancelled - this is expected, don't show error
@@ -672,9 +673,9 @@ final class ChatViewModel: ObservableObject {
         let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread, attachments: [], appContexts: [])
         context.insert(assistantMessage)
         // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        try await Task.detached {
+        Task.detached {
             try context.save()
-        }.value
+        }
 
         // Track the streaming message
         streamingMessageID = assistantMessage.id
@@ -716,9 +717,9 @@ final class ChatViewModel: ObservableObject {
                         let contentBeforeToolCall = String(combined[..<toolCallRange.lowerBound])
                         assistantMessage.content = contentBeforeToolCall
                         // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-                        try await Task.detached {
+                        Task.detached {
                             try context.save()
-                        }.value
+                        }
                         // Save the full combined string (includes start of tool call)
                         fullResponseWithToolCalls = combined
                         // Don't break yet - continue collecting the rest of the tool call
@@ -744,9 +745,9 @@ final class ChatViewModel: ObservableObject {
 
         // Final save after streaming completes
         // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        try await Task.detached {
+        Task.detached {
             try context.save()
-        }.value
+        }
 
         // If we detected tool calls during streaming, execute them
         if detectedToolCallDuringStream {
@@ -773,9 +774,9 @@ final class ChatViewModel: ObservableObject {
         } else {
             // No tool calls detected, just save the complete message
             // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-            try await Task.detached {
+            Task.detached {
                 try context.save()
-            }.value
+            }
         }
 
         // Clear streaming indicator after everything is done
@@ -891,9 +892,9 @@ final class ChatViewModel: ObservableObject {
 
         // Save once after all tools are executed
         // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        try await Task.detached {
+        Task.detached {
             try context.save()
-        }.value
+        }
 
         // Check for cancellation before follow-up
         try Task.checkCancellation()
@@ -975,9 +976,9 @@ final class ChatViewModel: ObservableObject {
 
         // Final save to persist all changes
         // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        try await Task.detached {
+        Task.detached {
             try context.save()
-        }.value
+        }
 
         // Update tool execution state to completed with results
         let executionResults = toolResults.map { (name, arguments, result, success) in

@@ -12,6 +12,7 @@ struct ComposerView: View {
     @Binding var showModelPicker: Bool
     @FocusState private var isFocused: Bool
     @State private var showFilePicker = false
+    @State private var cachedHeight: CGFloat = 24
     @ObservedObject private var scaleManager = AppScaleManager.shared
 
     private var defaultProvider: LLMProvider? {
@@ -50,9 +51,12 @@ struct ComposerView: View {
                     TextEditor(text: $viewModel.composerText)
                         .font(.system(size: 14 * scaleManager.scale))
                         .scrollContentBackground(.hidden)
-                        .frame(height: max(24, textEditorHeight))
+                        .frame(height: cachedHeight)
                         .focused($isFocused)
                         .onChange(of: viewModel.composerText) { _, newValue in
+                            // Update height cache
+                            cachedHeight = max(24, textEditorHeight)
+
                             // Check if user typed @
                             if newValue.hasSuffix("@") {
                                 viewModel.showMentionPicker = true
