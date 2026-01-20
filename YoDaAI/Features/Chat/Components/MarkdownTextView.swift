@@ -77,6 +77,8 @@ private struct CustomCodeBlockView: View {
             )
             .padding(.top, 8)
             .padding(.trailing, 12)
+            .allowsHitTesting(true)  // Ensure button receives clicks
+            .zIndex(1000)  // Ensure button is on top of text selection
         }
     }
 }
@@ -111,6 +113,7 @@ private struct CopyButtonView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .allowsHitTesting(true)  // Explicitly allow button to receive events
         .onHover { hovering in
             if hovering {
                 NSCursor.pointingHand.push()
