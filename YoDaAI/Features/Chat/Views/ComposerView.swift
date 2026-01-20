@@ -43,6 +43,7 @@ struct ComposerView: View {
                             .font(.system(size: 14 * scaleManager.scale))
                             .foregroundStyle(.secondary)
                             .padding(.leading, 5)
+                            .offset(y: -10)  // Move up to align with TextEditor cursor
                             .allowsHitTesting(false)
                     }
 
