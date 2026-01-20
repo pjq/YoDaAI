@@ -16,7 +16,8 @@ struct MarkdownTextView: View {
             .font(.system(size: 14 * scaleManager.scale))
             .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
             .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
-            .textual.textSelection(.enabled)  // Enable text selection using Textual's modifier
+            // Note: Text selection disabled to allow code block copy button to work
+            // Users can still use Cmd+C to copy text
     }
 }
 
@@ -61,41 +62,23 @@ private struct CustomCodeBlockView: View {
                 configuration.label
                     .textual.lineSpacing(.fontScaled(0.39))
                     .textual.fontScale(0.882 * scaleManager.scale)
-                    .textual.textSelection(.disabled)  // Disable text selection using Textual's modifier
                     .fixedSize(horizontal: false, vertical: true)
                     .monospaced()
                     .padding(12)
             }
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .textSelection(.disabled)  // Disable text selection on code blocks (use copy button instead)
 
-            // Copy button as an overlay - create a larger hit area that blocks text selection
-            ZStack {
-                // Invisible blocking area to prevent text selection on button
-                Color.clear
-                    .frame(width: 50, height: 50)
-                    .contentShape(Rectangle())
-                    .allowsHitTesting(true)
-
-                CopyButtonView(
-                    isCopied: $isCopied,
-                    scaleManager: scaleManager,
-                    onCopy: {
-                        configuration.codeBlock.copyToPasteboard()
-                    }
-                )
-            }
+            // Copy button as an overlay
+            CopyButtonView(
+                isCopied: $isCopied,
+                scaleManager: scaleManager,
+                onCopy: {
+                    configuration.codeBlock.copyToPasteboard()
+                }
+            )
             .padding(.top, 8)
             .padding(.trailing, 12)
-            .zIndex(1000)  // Ensure button is on top of text selection
-            .onHover { hovering in
-                if hovering {
-                    NSCursor.pointingHand.set()
-                } else {
-                    NSCursor.arrow.set()
-                }
-            }
         }
     }
 }
