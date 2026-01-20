@@ -89,6 +89,13 @@ private struct CustomCodeBlockView: View {
             .padding(.top, 8)
             .padding(.trailing, 12)
             .zIndex(1000)  // Ensure button is on top of text selection
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
         }
     }
 }
