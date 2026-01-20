@@ -352,7 +352,7 @@ final class ChatViewModel: ObservableObject {
                     let contextText = formatAppContext(snapshot, isMentioned: true)
 
                     // Create user message for this @ mention
-                    let contextMessage = ChatMessage(role: .user, content: contextText, thread: thread)
+                    let contextMessage = ChatMessage(role: .user, content: contextText, thread: thread, attachments: [], appContexts: [])
                     context.insert(contextMessage)
 
                     // Attach app context metadata
@@ -371,7 +371,7 @@ final class ChatViewModel: ObservableObject {
 
             // STEP 2: Create user message with text/images (if user typed anything)
             if !trimmed.isEmpty || !imagesToSend.isEmpty {
-                let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread)
+                let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread, attachments: [], appContexts: [])
                 context.insert(userMessage)
 
                 // Save images to disk and create attachments
@@ -660,7 +660,7 @@ final class ChatViewModel: ObservableObject {
         print("[ChatViewModel] ============================")
 
         // Create empty assistant message for streaming
-        let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread)
+        let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread, attachments: [], appContexts: [])
         context.insert(assistantMessage)
         // PERFORMANCE FIX: Save on background thread to avoid blocking UI
         try await Task.detached {
