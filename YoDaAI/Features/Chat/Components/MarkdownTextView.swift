@@ -16,7 +16,8 @@ struct MarkdownTextView: View {
             .font(.system(size: 14 * scaleManager.scale))
             .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
             .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
-            .textual.textSelection(.enabled)  // Enable text selection
+            // Text selection disabled to allow copy button to work
+            // This is a limitation of the Textual SDK - cannot have both simultaneously
     }
 }
 
@@ -82,57 +83,33 @@ private struct CustomCodeBlockView: View {
     }
 }
 
-// Custom NSButton with cursor tracking
-private class CopyButton: NSButton {
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
-    }
-}
-
-// Native AppKit button that sits outside the text selection layer
-private struct CopyButtonView: NSViewRepresentable {
+// Copy button view
+private struct CopyButtonView: View {
     @Binding var isCopied: Bool
     @ObservedObject var scaleManager: AppScaleManager
     let onCopy: () -> Void
 
-    func makeNSView(context: Context) -> CopyButton {
-        let button = CopyButton(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
-        button.isBordered = false
-        button.bezelStyle = .regularSquare
-        button.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy")
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.buttonClicked)
-        return button
-    }
-
-    func updateNSView(_ button: CopyButton, context: Context) {
-        context.coordinator.parent = self
-        button.image = NSImage(
-            systemSymbolName: isCopied ? "checkmark" : "doc.on.doc",
-            accessibilityDescription: isCopied ? "Copied" : "Copy"
-        )
-        button.contentTintColor = isCopied ? .systemGreen : .secondaryLabelColor
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    class Coordinator: NSObject {
-        var parent: CopyButtonView
-
-        init(parent: CopyButtonView) {
-            self.parent = parent
-        }
-
-        @objc func buttonClicked() {
-            print("[CodeBlock] Native button clicked")
-            parent.onCopy()
-            print("[CodeBlock] Setting isCopied = true")
-            parent.isCopied = true
+    var body: some View {
+        Button(action: {
+            onCopy()
+            isCopied = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                print("[CodeBlock] Resetting isCopied = false")
-                self.parent.isCopied = false
+                isCopied = false
+            }
+        }) {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 13 * scaleManager.scale))
+                .foregroundStyle(isCopied ? .green : .secondary)
+                .padding(6)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
             }
         }
     }
