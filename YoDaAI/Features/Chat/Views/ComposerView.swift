@@ -12,7 +12,7 @@ struct ComposerView: View {
     @Binding var showModelPicker: Bool
     @FocusState private var isFocused: Bool
     @State private var showFilePicker = false
-    @State private var cachedHeight: CGFloat = 24
+    @State private var cachedHeight: CGFloat = 36  // Single line (20px) + padding (16px)
     @ObservedObject private var scaleManager = AppScaleManager.shared
 
     private var defaultProvider: LLMProvider? {
@@ -36,13 +36,14 @@ struct ComposerView: View {
                 }
 
                 // Text Input with popovers
-                ZStack(alignment: .leading) {
-                    // Placeholder text
+                ZStack(alignment: .topLeading) {
+                    // Placeholder text - positioned to match TextEditor's internal text position
                     if viewModel.composerText.isEmpty {
                         Text("Ask anything, @ to mention apps, / for commands")
                             .font(.system(size: 14 * scaleManager.scale))
                             .foregroundStyle(.secondary)
                             .padding(.leading, 5)
+                            .padding(.top, 8)
                             .allowsHitTesting(false)
                     }
 
@@ -54,7 +55,7 @@ struct ComposerView: View {
                         .focused($isFocused)
                         .onChange(of: viewModel.composerText) { _, newValue in
                             // Update height cache
-                            cachedHeight = max(24, textEditorHeight)
+                            cachedHeight = textEditorHeight
 
                             // Check if user typed @
                             if newValue.hasSuffix("@") {
@@ -203,8 +204,9 @@ struct ComposerView: View {
         // Calculate height based on number of lines (approximate)
         let lineCount = max(1, viewModel.composerText.split(separator: "\n").count)
         let lineHeight: CGFloat = 20 * scaleManager.scale
-        let padding: CGFloat = 8
-        let calculatedHeight = CGFloat(lineCount) * lineHeight + padding
+        // TextEditor has internal padding of ~8px top + 8px bottom
+        let verticalPadding: CGFloat = 16
+        let calculatedHeight = CGFloat(lineCount) * lineHeight + verticalPadding
         // Cap at 150px for scrolling
         return min(calculatedHeight, 150)
     }
