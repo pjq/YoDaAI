@@ -180,40 +180,95 @@ YoDaAI includes an automated release script that handles everything with one com
 
 #### Release Process
 
-Run the release script:
+**Interactive Mode** (recommended):
 
 ```bash
 ./release.sh
 ```
 
-The script will:
-1. ✅ Check for uncommitted changes
-2. ✅ Ask you to choose version bump (patch/minor/major)
-3. ✅ Generate changelog from git commits
-4. ✅ Update version in Info.plist
-5. ✅ Build Release configuration
-6. ✅ Create ZIP and DMG artifacts
-7. ✅ Create git tag and push to GitHub
-8. ✅ Create GitHub release with artifacts
-9. ✅ Open release page in browser
+The script will prompt you to select version bump type and confirm before proceeding.
 
-**Example:**
+**Automated Mode** (for CI/CD or scripts):
+
+```bash
+# Patch version bump (0.1.0 → 0.1.1)
+./release.sh --type patch --yes
+
+# Minor version bump (0.1.0 → 0.2.0)
+./release.sh --type minor --yes
+
+# Major version bump (0.1.0 → 1.0.0)
+./release.sh --type major --yes
+
+# Custom version
+./release.sh --version 1.0.0 --yes
+```
+
+**Available Options:**
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `-t, --type TYPE` | Version bump type: `patch`, `minor`, or `major` | `--type minor` |
+| `-v, --version VERSION` | Custom version number (e.g., 1.2.3) | `--version 1.0.0` |
+| `-y, --yes` | Skip confirmation prompt (auto-confirm) | `--yes` |
+| `-h, --help` | Show help message | `--help` |
+
+**What the script does:**
+
+1. ✅ Check for uncommitted changes (fails if dirty)
+2. ✅ Determine version (from bump type or custom version)
+3. ✅ Generate changelog from git commits since last tag
+4. ✅ Update version in Info.plist
+5. ✅ Commit version bump
+6. ✅ Build Release configuration
+7. ✅ Code sign app (ad-hoc signing)
+8. ✅ Create ZIP and DMG artifacts in `releases/` directory
+9. ✅ Create git tag and push to GitHub
+10. ✅ Create GitHub release via API
+11. ✅ Upload ZIP and DMG artifacts to release
+12. ✅ Open release page in browser
+
+**Example - Interactive:**
 ```bash
 $ ./release.sh
 
-Current version: 0.0.0
+Current version: 0.2.1
 
 Select version bump type:
-1) Patch (0.0.0 → 0.0.1)
-2) Minor (0.0.0 → 0.1.0)
-3) Major (0.0.0 → 1.0.0)
+1) Patch (0.2.1 → 0.2.2)
+2) Minor (0.2.1 → 0.3.0)
+3) Major (0.2.1 → 1.0.0)
 4) Custom version
 Enter choice [1-4]: 2
 
-Proceed with release v0.1.0? [y/N]: y
+Changelog:
+- feat: Enhance composer with multiline support
+- fix: Improve composer UX - compact height
+- perf: Remove blocking .value calls on Task.detached saves
 
-✓ Release v0.1.0 published successfully!
+Proceed with release v0.3.0? [y/N]: y
+
+✓ Release v0.3.0 published successfully!
 ```
+
+**Example - Automated:**
+```bash
+# Automated minor version bump
+./release.sh --type minor --yes
+
+# Output:
+# Current version: 0.2.1
+# Bumping minor version: 0.2.1 → 0.3.0
+# ...
+# ✓ Release v0.3.0 published successfully!
+```
+
+**Troubleshooting:**
+
+- **"GITHUB_TOKEN not found"**: Add token to ~/.zshrc (see One-Time Setup above)
+- **"Build failed"**: Check `/tmp/xcodebuild.log` for errors
+- **"Failed to upload artifacts"**: Check GITHUB_TOKEN permissions (needs `repo` scope)
+- **"You have uncommitted changes"**: Commit or stash changes first
 
 See [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for detailed documentation.
 

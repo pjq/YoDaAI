@@ -356,13 +356,18 @@ EOF
         print_info "Uploading ZIP artifact..."
         local zip_filename=$(basename "$zip_path")
 
-        curl -s -X POST \
+        local upload_response=$(curl -s -X POST \
             -H "Authorization: token ${GITHUB_TOKEN}" \
             -H "Content-Type: application/zip" \
             --data-binary @"${zip_path}" \
-            "https://uploads.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/${release_id}/assets?name=${zip_filename}" > /dev/null
+            "https://uploads.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/${release_id}/assets?name=${zip_filename}")
 
-        print_success "Uploaded: ${zip_filename}"
+        if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
+            print_success "Uploaded: ${zip_filename}"
+        else
+            print_error "Failed to upload ZIP artifact"
+            echo "$upload_response" | jq . 2>/dev/null || echo "$upload_response"
+        fi
     fi
 
     # Upload DMG artifact
@@ -370,13 +375,18 @@ EOF
         print_info "Uploading DMG artifact..."
         local dmg_filename=$(basename "$dmg_path")
 
-        curl -s -X POST \
+        local upload_response=$(curl -s -X POST \
             -H "Authorization: token ${GITHUB_TOKEN}" \
             -H "Content-Type: application/x-apple-diskimage" \
             --data-binary @"${dmg_path}" \
-            "https://uploads.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/${release_id}/assets?name=${dmg_filename}" > /dev/null
+            "https://uploads.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/${release_id}/assets?name=${dmg_filename}")
 
-        print_success "Uploaded: ${dmg_filename}"
+        if echo "$upload_response" | jq -e '.browser_download_url' > /dev/null 2>&1; then
+            print_success "Uploaded: ${dmg_filename}"
+        else
+            print_error "Failed to upload DMG artifact"
+            echo "$upload_response" | jq . 2>/dev/null || echo "$upload_response"
+        fi
     fi
 
     local release_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/tag/${tag}"

@@ -149,75 +149,303 @@ xcodebuild -scheme YoDaAI -configuration Debug clean build
 
 ## Release Process
 
-YoDaAI has an automated release script that handles the entire release workflow:
+YoDaAI has an automated release script (`release.sh`) that handles the entire release workflow with a single command.
 
-### Quick Release
+### Prerequisites (One-time Setup)
+
+Before first use, set up required tools and credentials:
+
+```bash
+# 1. Install jq for JSON processing
+brew install jq
+
+# 2. Create GitHub Personal Access Token
+# Go to: https://github.com/settings/tokens
+# Generate new token (classic) with 'repo' scope
+# Copy the token
+
+# 3. Add token to ~/.zshrc
+echo 'export GITHUB_TOKEN="ghp_your_token_here"' >> ~/.zshrc
+source ~/.zshrc
+
+# 4. Verify setup
+jq --version
+echo $GITHUB_TOKEN
+```
+
+**Required environment variables:**
+- `GITHUB_TOKEN` - GitHub Personal Access Token with `repo` scope
+
+### Running a Release
+
+**Interactive Mode** (recommended for manual releases):
 
 ```bash
 ./release.sh
 ```
 
-This single command will:
-1. Check for uncommitted changes
-2. Show current version and ask for bump type (patch/minor/major)
-3. Generate changelog from git commits since last tag
-4. Update version in Info.plist
-5. Build Release configuration
-6. Create ZIP and DMG artifacts
-7. Create git tag
-8. Push to GitHub
-9. Create GitHub release with artifacts via API
-10. Open release page in browser
+The script will:
+1. Display current version (from last git tag)
+2. Prompt you to select version bump type:
+   - 1) Patch (0.2.1 → 0.2.2) - Bug fixes, minor improvements
+   - 2) Minor (0.2.1 → 0.3.0) - New features, backward compatible
+   - 3) Major (0.2.1 → 1.0.0) - Breaking changes
+   - 4) Custom version - Specify exact version (e.g., 1.0.0-beta.1)
+3. Generate and display changelog from commit messages since last tag
+4. Ask for confirmation to proceed
+5. Execute the full release workflow
 
-### Setup (One-time)
-
-Before first use, set up GitHub token:
+**Automated Mode** (for scripts or CI/CD):
 
 ```bash
-# Install jq for JSON processing
-brew install jq
+# Patch version bump
+./release.sh --type patch --yes
 
-# Add GitHub token to ~/.zshrc
-echo 'export GITHUB_TOKEN="ghp_your_token_here"' >> ~/.zshrc
-source ~/.zshrc
+# Minor version bump
+./release.sh --type minor --yes
+
+# Major version bump
+./release.sh --type major --yes
+
+# Custom version
+./release.sh --version 1.0.0 --yes
 ```
 
-Get GitHub token from: https://github.com/settings/tokens (needs `repo` scope)
+**Command-line Parameters:**
 
-### Release Files
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `-t, --type TYPE` | Version bump type: `patch`, `minor`, or `major` | `--type minor` |
+| `-v, --version VERSION` | Custom version number (e.g., 1.2.3) | `--version 1.0.0` |
+| `-y, --yes` | Skip confirmation prompt (auto-confirm) | `--yes` |
+| `-h, --help` | Show help message | `--help` |
 
-The script creates:
-- **releases/YoDaAI-X.Y.Z.zip** - ZIP archive for download
-- **releases/YoDaAI-X.Y.Z.dmg** - Professional disk image with Applications symlink
-- **Git tag** - vX.Y.Z
-- **GitHub release** - With auto-generated changelog and artifacts
+### What the Script Does
 
-### Version Bumping
+The automated release workflow:
 
-The script supports semantic versioning:
-- **Patch** (0.1.0 → 0.1.1): Bug fixes, minor improvements
-- **Minor** (0.1.0 → 0.2.0): New features, backward compatible
-- **Major** (0.1.0 → 1.0.0): Breaking changes
-- **Custom**: Specify exact version (e.g., 1.0.0-beta.1)
+1. **Pre-flight checks**:
+   - Verify in git repository
+   - Check for uncommitted changes (fails if dirty)
+   - Validate GITHUB_TOKEN is set
+
+2. **Version management**:
+   - Get current version from git tags
+   - Determine new version (bump or custom)
+   - Generate changelog from commits since last tag
+   - Update version in `YoDaAI/Info.plist`
+   - Commit version bump
+
+3. **Build artifacts**:
+   - Clean build folder
+   - Build Release configuration
+   - Locate built app in DerivedData
+   - Code sign app (ad-hoc signing)
+
+4. **Create release artifacts**:
+   - Create `releases/` directory
+   - Generate ZIP: `YoDaAI-X.Y.Z.zip`
+   - Generate DMG: `YoDaAI-X.Y.Z.dmg` (with Applications symlink)
+
+5. **Publish release**:
+   - Create git tag: `vX.Y.Z`
+   - Push commits and tag to GitHub
+   - Create GitHub release via API (with changelog)
+   - Upload ZIP artifact to release
+   - Upload DMG artifact to release
+   - Open release page in browser
+
+### Release Files Created
+
+After successful release, you'll find:
+
+- **Local artifacts**:
+  - `releases/YoDaAI-X.Y.Z.zip` - ZIP archive (5-7MB)
+  - `releases/YoDaAI-X.Y.Z.dmg` - Disk image (6-8MB)
+
+- **Git artifacts**:
+  - Git commit: "Bump version to X.Y.Z"
+  - Git tag: `vX.Y.Z`
+
+- **GitHub release**:
+  - Release page: `https://github.com/pjq/YoDaAI/releases/tag/vX.Y.Z`
+  - Attached artifacts: ZIP and DMG files
+  - Auto-generated changelog from commit messages
+  - Installation instructions (auto-generated)
 
 ### Changelog Generation
 
-The script automatically generates changelogs from commit messages since the last git tag. Write clear commit messages for better changelogs:
+The script automatically generates changelogs from commit messages between the last tag and HEAD.
 
-**Good commit messages:**
+**Writing good commit messages for changelogs:**
+
+Standard format:
 ```
 Add /settings slash command to open settings window
 Fix Automation permission dialog not appearing
 Improve content capture for Safari
 ```
 
-**Conventional commits (recommended):**
+Conventional Commits (recommended):
 ```
 feat: add /settings slash command
 fix: automation permission dialog not appearing
 perf: improve content capture for Safari
 docs: add quickstart guide for permissions
+refactor: extract chat components into Features/ directory
 ```
+
+The generated changelog will list all commits, so write clear, user-facing commit messages.
+
+### Semantic Versioning
+
+YoDaAI follows [Semantic Versioning](https://semver.org/):
+
+- **PATCH** (0.1.0 → 0.1.1): Bug fixes, minor improvements, no breaking changes
+- **MINOR** (0.1.0 → 0.2.0): New features, enhancements, backward compatible
+- **MAJOR** (0.1.0 → 1.0.0): Breaking changes, major refactoring
+
+**Examples:**
+- Fix UI alignment bug → **PATCH**
+- Add multiline composer support → **MINOR**
+- Change SwiftData schema (breaking) → **MAJOR**
+
+### Troubleshooting
+
+**"GITHUB_TOKEN not found in environment"**
+- Add token to ~/.zshrc: `export GITHUB_TOKEN="ghp_..."`
+- Source the file: `source ~/.zshrc`
+- Verify: `echo $GITHUB_TOKEN`
+
+**"You have uncommitted changes"**
+- Commit or stash changes first: `git status`
+- The script requires a clean working directory
+
+**"Build failed"**
+- Check detailed logs: `cat /tmp/xcodebuild.log`
+- Common issues: Swift 6 warnings, missing dependencies
+
+**"Failed to upload ZIP artifact" or "Failed to upload DMG artifact"**
+- Check GITHUB_TOKEN has `repo` scope
+- Verify token is valid: `curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user`
+- Check file exists: `ls -lh releases/YoDaAI-*.{zip,dmg}`
+- The script now shows upload errors (previously hidden by `> /dev/null`)
+
+**Release created but artifacts not uploaded**
+- Manually upload using GitHub API:
+  ```bash
+  # Get release ID
+  RELEASE_ID=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+    https://api.github.com/repos/pjq/YoDaAI/releases/tags/vX.Y.Z | jq -r .id)
+
+  # Upload ZIP
+  curl -X POST \
+    -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Content-Type: application/zip" \
+    --data-binary @releases/YoDaAI-X.Y.Z.zip \
+    "https://uploads.github.com/repos/pjq/YoDaAI/releases/${RELEASE_ID}/assets?name=YoDaAI-X.Y.Z.zip"
+
+  # Upload DMG
+  curl -X POST \
+    -H "Authorization: token $GITHUB_TOKEN" \
+    -H "Content-Type: application/x-apple-diskimage" \
+    --data-binary @releases/YoDaAI-X.Y.Z.dmg \
+    "https://uploads.github.com/repos/pjq/YoDaAI/releases/${RELEASE_ID}/assets?name=YoDaAI-X.Y.Z.dmg"
+  ```
+
+### Examples
+
+**Example 1: Interactive release (recommended)**
+```bash
+$ ./release.sh
+
+===================================
+YoDaAI Release Automation
+===================================
+
+→ Current version: 0.2.1
+
+Select version bump type:
+1) Patch (0.2.1 → 0.2.2)
+2) Minor (0.2.1 → 0.3.0)
+3) Major (0.2.1 → 1.0.0)
+4) Custom version
+Enter choice [1-4]: 2
+
+→ New version: 0.3.0
+
+Changelog:
+- feat: Enhance composer with multiline support and scrolling
+- fix: Improve composer UX - compact height and Return to send
+- fix: Initialize attachments array in ChatMessage to prevent SwiftData crash
+- perf: Remove blocking .value calls on Task.detached saves
+
+Proceed with release v0.3.0? [y/N]: y
+
+✓ Updated Info.plist: v0.3.0 (125)
+✓ Build completed successfully
+✓ Found: /Users/.../DerivedData/.../YoDaAI.app
+✓ App signed successfully
+✓ Created: releases/YoDaAI-0.3.0.zip
+✓ Created: releases/YoDaAI-0.3.0.dmg
+✓ Created release: v0.3.0 (ID: 278178326)
+✓ Uploaded: YoDaAI-0.3.0.zip
+✓ Uploaded: YoDaAI-0.3.0.dmg
+✓ Release published: https://github.com/pjq/YoDaAI/releases/tag/v0.3.0
+
+===================================
+Release Complete!
+===================================
+Version: v0.3.0
+ZIP: releases/YoDaAI-0.3.0.zip
+DMG: releases/YoDaAI-0.3.0.dmg
+GitHub Release: https://github.com/pjq/YoDaAI/releases/tag/v0.3.0
+
+✓ Release v0.3.0 published successfully!
+```
+
+**Example 2: Automated patch release**
+```bash
+./release.sh --type patch --yes
+
+# Output:
+# → Current version: 0.3.0
+# → Bumping patch version: 0.3.0 → 0.3.1
+# → Auto-confirming release (--yes flag set)
+# ...
+# ✓ Release v0.3.1 published successfully!
+```
+
+**Example 3: Custom version for beta release**
+```bash
+./release.sh --version 1.0.0-beta.1 --yes
+
+# Creates release: v1.0.0-beta.1
+```
+
+### For AI Agents
+
+When asked to create a release:
+
+1. **Check working directory is clean**:
+   ```bash
+   git status
+   ```
+
+2. **Run release script with appropriate parameters**:
+   - For normal releases: `./release.sh --type minor --yes` (or patch/major)
+   - For specific versions: `./release.sh --version X.Y.Z --yes`
+
+3. **Verify release was created**:
+   - Check for success message: "✓ Release vX.Y.Z published successfully!"
+   - Verify artifacts were uploaded: "✓ Uploaded: YoDaAI-X.Y.Z.zip" and "✓ Uploaded: YoDaAI-X.Y.Z.dmg"
+   - Check release URL: `https://github.com/pjq/YoDaAI/releases/tag/vX.Y.Z`
+
+4. **Handle errors**:
+   - If upload fails, the script now shows detailed error messages
+   - Check GITHUB_TOKEN is set and valid
+   - Verify artifacts exist in `releases/` directory
+   - If needed, manually upload artifacts (see Troubleshooting section above)
 
 See [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for detailed documentation.
 
