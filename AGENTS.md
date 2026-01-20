@@ -19,6 +19,7 @@ This document provides AI agents with the necessary context to understand and co
 - **Data Persistence**: SwiftData
 - **Networking**: URLSession with async/await
 - **Accessibility**: macOS Accessibility APIs (AXUIElement)
+- **Markdown Rendering**: Textual SDK (syntax highlighting, code blocks)
 - **Build System**: Xcode project (`.xcodeproj`)
 
 ## Project Structure
@@ -28,8 +29,36 @@ YoDaAI/
 ├── YoDaAI.xcodeproj/          # Xcode project file
 ├── YoDaAI/                    # Main app source
 │   ├── YoDaAIApp.swift        # App entry point, SwiftData container setup
-│   ├── ContentView.swift      # Main UI (sidebar, chat, settings)
+│   ├── ContentView.swift      # Main UI (183 lines, refactored from 2,187)
 │   ├── ChatViewModel.swift    # Chat logic, message sending
+│   │
+│   ├── Features/              # Feature-based architecture (15 component files)
+│   │   ├── Chat/
+│   │   │   ├── Components/
+│   │   │   │   ├── AssistantMessageComponents.swift  # Tool calls, tool results
+│   │   │   │   ├── ImageThumbnailRow.swift
+│   │   │   │   ├── MarkdownTextView.swift  # Textual SDK rendering
+│   │   │   │   ├── MentionChipsView.swift
+│   │   │   │   ├── MessageImageComponents.swift
+│   │   │   │   ├── PasteInterceptor.swift
+│   │   │   │   ├── Popovers.swift
+│   │   │   │   └── TypingIndicatorView.swift
+│   │   │   └── Views/
+│   │   │       ├── ChatDetailView.swift
+│   │   │       ├── ChatHeaderView.swift
+│   │   │       ├── ComposerView.swift
+│   │   │       ├── EmptyStateView.swift
+│   │   │       ├── MessageListView.swift
+│   │   │       └── MessageRowView.swift
+│   │   ├── Sidebar/
+│   │   │   └── Views/
+│   │   │       └── ThreadRowView.swift
+│   │   └── Settings/          # (in Views/ directory)
+│   │       ├── APIKeysSettingsView.swift
+│   │       ├── GeneralSettingsView.swift
+│   │       ├── MCPServersSettingsView.swift
+│   │       └── PermissionsSettingsView.swift
+│   │
 │   ├── OpenAICompatibleClient.swift  # API client for LLM providers
 │   ├── AccessibilityService.swift    # macOS accessibility integration
 │   ├── AppPermissionsStore.swift     # Per-app permission management
@@ -71,22 +100,35 @@ YoDaAI/
 | `AppPermissionsStore.swift` | `AppPermissionsStore` | Manage per-app permission rules |
 | `ChatViewModel.swift` | `ChatViewModel` | Main chat logic, coordinates sending messages |
 
-### UI Components (in `ContentView.swift`)
+### UI Components (Feature-based Architecture)
 
-| Component | Purpose |
-|-----------|---------|
-| `ContentView` | Main view with NavigationSplitView |
-| `ThreadRowView` | Sidebar thread list item |
-| `ChatDetailView` | Chat message area |
-| `ChatHeaderView` | Chat title and action buttons |
-| `MessageListView` | Scrollable message list |
-| `MessageRowView` | Individual message bubble |
-| `ComposerView` | Text input and toolbar |
-| `ModelPickerPopover` | Model/provider selection dropdown |
-| `SettingsView` | Tabbed settings sheet |
-| `GeneralSettingsTab` | General settings (app context toggle) |
-| `APIKeysSettingsTab` | Provider management |
-| `PermissionsSettingsTab` | Per-app permissions |
+**Note**: ContentView.swift was refactored from 2,187 lines to 183 lines (91.6% reduction) by extracting components into a feature-based architecture.
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `ContentView` | Root | Main view with NavigationSplitView (183 lines) |
+| **Chat Components** | `Features/Chat/Components/` | |
+| `MarkdownTextView` | Components | Textual SDK markdown rendering with code blocks |
+| `AssistantMessageComponents` | Components | Tool calls, tool results display |
+| `TypingIndicatorView` | Components | Animated "thinking" indicator |
+| `ImageThumbnailRow` | Components | Image attachment preview |
+| `MentionChipsView` | Components | @mention chips display |
+| `PasteInterceptor` | Components | Intercept paste events for images |
+| `Popovers` | Components | Model picker, image viewer popovers |
+| **Chat Views** | `Features/Chat/Views/` | |
+| `ChatDetailView` | Views | Chat message area |
+| `ChatHeaderView` | Views | Chat title and action buttons |
+| `MessageListView` | Views | Scrollable message list |
+| `MessageRowView` | Views | Individual message bubble |
+| `ComposerView` | Views | Text input and toolbar |
+| `EmptyStateView` | Views | Empty state placeholder |
+| **Sidebar** | `Features/Sidebar/Views/` | |
+| `ThreadRowView` | Views | Sidebar thread list item |
+| **Settings** | `Views/Settings/` | |
+| `GeneralSettingsView` | Settings | General settings (app context toggle) |
+| `APIKeysSettingsView` | Settings | Provider management |
+| `PermissionsSettingsView` | Settings | Per-app permissions |
+| `MCPServersSettingsView` | Settings | MCP server configuration |
 
 ## Build Commands
 
@@ -200,6 +242,30 @@ The app uses SwiftData with these models registered in `YoDaAIApp.swift`:
 6. Creates `ChatMessage` (assistant role) with response
 7. Auto-generates thread title if first message
 
+**Performance**: All `context.save()` operations are wrapped in `Task.detached` to run on background threads, preventing UI freezing when saving messages. The ChatViewModel is marked `@MainActor`, so explicit background threading is required for database operations.
+
+```swift
+// Save on background thread to prevent UI blocking
+try await Task.detached {
+    try context.save()
+}.value
+```
+
+### Textual SDK Integration
+
+The app uses the Textual SDK for markdown rendering in assistant messages, providing:
+- Syntax-highlighted code blocks
+- Custom code block styling with copy button
+- Rich text formatting (bold, italic, lists, tables)
+- Wrapping overflow mode for long code lines
+
+**Known limitation**: Text selection and code block copy button cannot work simultaneously. The text selection layer at the StructuredText level intercepts all mouse events, preventing button clicks. Current implementation prioritizes the copy button functionality:
+- Copy button works for code blocks
+- Mouse text selection disabled on message content
+- Keyboard shortcuts (Cmd+C) still work for copying text
+
+Located in: `Features/Chat/Components/MarkdownTextView.swift`
+
 ### Accessibility Features
 
 - **Context Capture**: Gets frontmost app name, window title, focused element value
@@ -253,10 +319,15 @@ The UI follows the "Alter" app design (see `docs/refer/` screenshots):
 
 ## Known Issues & Considerations
 
-1. **Swift 6 Concurrency**: Uses `@MainActor` extensively; be careful with `nonisolated` contexts
+1. **Swift 6 Concurrency**: Uses `@MainActor` extensively; be careful with `nonisolated` contexts. All SwiftData `context.save()` operations must be wrapped in `Task.detached` to prevent UI blocking.
 2. **SwiftData ForEach**: May need explicit type annotations (e.g., `ForEach(items) { (item: Type) in }`)
 3. **Accessibility Permissions**: App must be granted permissions manually in System Preferences
 4. **Network Sandbox**: Requires `com.apple.security.network.client` entitlement
+5. **Textual SDK Limitation**: Cannot have both text selection and interactive buttons (like copy button) in StructuredText. Current implementation disables text selection to preserve copy button functionality. If text selection is needed, consider using a different markdown rendering library or wait for Textual SDK updates.
+6. **Performance Best Practices**:
+   - Always move database operations off main thread using `Task.detached`
+   - Keep image operations on main thread if using `@MainActor` services like `ImageStorageService`
+   - Monitor main thread blocking with Instruments if experiencing UI freezes
 
 ## Testing
 
