@@ -12,12 +12,11 @@ struct MarkdownTextView: View {
     var body: some View {
         // Textual's StructuredText provides rich markdown rendering
         // with code blocks, tables, syntax highlighting, and more
-        // Note: Text selection disabled on StructuredText to allow button clicks
-        // Code is still copyable via the copy button
         StructuredText(markdown: content)
             .font(.system(size: 14 * scaleManager.scale))
             .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
             .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
+            .textSelection(.enabled)  // Enable text selection for user content
     }
 }
 
