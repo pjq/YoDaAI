@@ -9,8 +9,8 @@ private let axEditableAttribute = "AXEditable" // kAXEditableAttribute is not al
 private let kAXTimeout: Float = 2.0
 
 // Reduced limits for tree traversal to prevent hangs
-private let kMaxTreeDepth = 8
-private let kMaxTotalChars = 4000
+private let kMaxTreeDepth = 10  // Increased for email clients with nested content
+private let kMaxTotalChars = 8000  // Increased to capture more email content
 private let kMaxChildrenPerLevel = 30
 
 struct AppContextSnapshot: Sendable {
@@ -320,28 +320,54 @@ final class AccessibilityService {
     
     /// Find the main content area in a window (web area, scroll area with text, etc.)
     private func findMainContentArea(in element: AXUIElement) -> AXUIElement? {
-        // Priority roles for main content
-        let contentRoles = ["AXWebArea", "AXScrollArea", "AXTextArea", "AXGroup"]
-        
+        // Priority roles for main content - expanded list for email clients
+        let contentRoles = [
+            "AXWebArea",        // Web content (Teams, Outlook web view)
+            "AXScrollArea",     // Scrollable content areas
+            "AXTextArea",       // Text areas
+            "AXGroup",          // Generic groups
+            "AXStaticText",     // Static text (email body)
+            "AXTextField",      // Text fields
+            "AXList",           // Lists (email threads)
+            "AXTable",          // Tables (email content)
+            "AXOutline"         // Outlines (folder structures)
+        ]
+
         var childrenRef: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return nil }
-        
+
+        // First pass: Look for elements with substantial content
         for child in children.prefix(kMaxChildrenPerLevel) {
             setAXTimeout(for: child)
             let role = copyAXString(child, attribute: kAXRoleAttribute)
-            if let role = role, contentRoles.contains(role) {
-                // Check if this element has substantial content
-                if let value = copyAXString(child, attribute: kAXValueAttribute), value.count > 50 {
-                    return child
-                }
-                // Recursively check children
+
+            // Check for substantial text content
+            if let value = copyAXString(child, attribute: kAXValueAttribute), value.count > 100 {
+                print("[AccessibilityService] Found content area with \(value.count) chars, role: \(role ?? "unknown")")
+                return child
+            }
+
+            // For email clients, look for scroll areas that might contain the message body
+            if role == "AXScrollArea" {
+                // Recursively check if this scroll area has content
                 if let found = findMainContentArea(in: child) {
                     return found
                 }
             }
         }
-        
+
+        // Second pass: Recursively search in priority roles
+        for child in children.prefix(kMaxChildrenPerLevel) {
+            setAXTimeout(for: child)
+            let role = copyAXString(child, attribute: kAXRoleAttribute)
+            if let role = role, contentRoles.contains(role) {
+                if let found = findMainContentArea(in: child) {
+                    return found
+                }
+            }
+        }
+
         return nil
     }
     
@@ -585,6 +611,25 @@ final class AccessibilityService {
                         set msgSender to sender of theMessage
                         set msgContent to content of theMessage
                         return "Subject: " & msgSubject & linefeed & "From: " & msgSender & linefeed & linefeed & msgContent
+                    end if
+                end try
+                return msgContent
+            end tell
+            """
+
+        case "com.microsoft.Outlook":
+            // Outlook: Get content of selected message
+            script = """
+            tell application "Microsoft Outlook"
+                set msgContent to ""
+                try
+                    set theMessages to current messages
+                    if theMessages is not {} then
+                        set theMessage to item 1 of theMessages
+                        set msgSubject to subject of theMessage
+                        set msgSender to sender of theMessage
+                        set msgBody to plain text content of theMessage
+                        return "Subject: " & msgSubject & linefeed & "From: " & (address of msgSender) & linefeed & linefeed & msgBody
                     end if
                 end try
                 return msgContent
@@ -984,10 +1029,9 @@ final class AccessibilityService {
             "icon"
         ]
 
-        if let id = identifier, skipIdentifiers.contains(where: { id.lowercased().contains($0.lowercased()) }) {
-            // This is a UI framework identifier, skip the value but still recurse
-            // to get child content
-        } else {
+        let shouldSkipValue = identifier != nil && skipIdentifiers.contains(where: { identifier!.lowercased().contains($0.lowercased()) })
+
+        if !shouldSkipValue {
             // Try to get text value
             if let value = copyAXString(element, attribute: kAXValueAttribute) {
                 let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1018,6 +1062,31 @@ final class AccessibilityService {
                     if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) }) {
                         contents.append(trimmed)
                     }
+                }
+            }
+
+            // For list and table elements (common in email clients), try to get their content
+            if role == "AXList" || role == "AXTable" || role == "AXOutline" {
+                // Try to get row content from lists/tables
+                if let rows = copyAXArray(element, attribute: kAXRowsAttribute as String) {
+                    for row in rows.prefix(50) { // Limit rows to prevent hanging
+                        setAXTimeout(for: row)
+                        if let rowValue = copyAXString(row, attribute: kAXValueAttribute) {
+                            let trimmed = rowValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if trimmed.count > 3 && !contents.contains(where: { $0.contains(trimmed) }) {
+                                contents.append(trimmed)
+                                print("[AccessibilityService] Found row text: \(trimmed.prefix(50))...")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Try AXHelp attribute (sometimes contains useful text)
+            if let help = copyAXString(element, attribute: kAXHelpAttribute as String) {
+                let trimmed = help.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.count > 10 && !contents.contains(where: { $0.contains(trimmed) }) {
+                    contents.append(trimmed)
                 }
             }
         }
@@ -1125,6 +1194,15 @@ final class AccessibilityService {
             return number.boolValue
         }
         return nil
+    }
+
+    private func copyAXArray(_ element: AXUIElement, attribute: String) -> [AXUIElement]? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard error == .success else {
+            return nil
+        }
+        return value as? [AXUIElement]
     }
 
     private func truncate(_ string: String, limit: Int) -> String {
