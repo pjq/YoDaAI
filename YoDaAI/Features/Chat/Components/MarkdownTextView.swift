@@ -7,42 +7,43 @@ import Textual
 /// Replaces ~275 lines of custom parsing with production-ready library
 struct MarkdownTextView: View {
     let content: String
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    /// When set, a "View Diagram" button is shown in the code block header (drawio XML blocks).
+    var drawioXML: String? = nil
+    @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
-        // Textual's StructuredText provides rich markdown rendering
-        // with code blocks, tables, syntax highlighting, and more
         StructuredText(markdown: content)
             .font(.system(size: 14 * scaleManager.scale))
-            .textual.overflowMode(.wrap)      // Wrap long code blocks instead of scroll
-            .textual.codeBlockStyle(CustomCodeBlockStyle())  // Custom style with copy button
-            // Text selection disabled to allow copy button to work
-            // This is a limitation of the Textual SDK - cannot have both simultaneously
+            .textual.overflowMode(.wrap)
+            .textual.codeBlockStyle(CustomCodeBlockStyle(drawioXML: drawioXML))
     }
 }
 
 // MARK: - Custom Code Block Style with Copy Button
 private struct CustomCodeBlockStyle: StructuredText.CodeBlockStyle {
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    let drawioXML: String?
+    @Environment(\.appScaleManager) private var scaleManager
 
     func makeBody(configuration: Configuration) -> some View {
-        CustomCodeBlockView(
-            configuration: configuration,
-            scaleManager: scaleManager
-        )
+        CustomCodeBlockView(configuration: configuration, drawioXML: drawioXML)
     }
 }
 
 private struct CustomCodeBlockView: View {
     let configuration: StructuredText.CodeBlockStyleConfiguration
-    @ObservedObject var scaleManager: AppScaleManager
+    let drawioXML: String?
+    @Environment(\.appScaleManager) private var scaleManager
     @State private var isCopied = false
+    @State private var showDiagramSheet = false
+
+    // Number of action buttons shown in the header overlay
+    private var buttonCount: Int { drawioXML != nil ? 2 : 1 }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             // Main code block content
             VStack(alignment: .leading, spacing: 0) {
-                // Header with language hint (no button here - it's in overlay)
+                // Header
                 HStack {
                     if let language = configuration.languageHint, !language.isEmpty {
                         Text(language)
@@ -50,15 +51,14 @@ private struct CustomCodeBlockView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    // Empty space for the button overlay
-                    Color.clear.frame(width: 80, height: 24)
-                        .allowsHitTesting(false)  // Don't block button clicks
+                    // Reserve space for the button overlay so text doesn't underlap buttons
+                    Color.clear.frame(width: CGFloat(buttonCount) * 32, height: 24)
+                        .allowsHitTesting(false)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
 
-                // Code content rendered by Textual with syntax highlighting
                 configuration.label
                     .textual.lineSpacing(.fontScaled(0.39))
                     .textual.fontScale(0.882 * scaleManager.scale)
@@ -69,24 +69,50 @@ private struct CustomCodeBlockView: View {
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            // Copy button as an overlay
-            CopyButtonView(
-                isCopied: $isCopied,
-                scaleManager: scaleManager,
-                onCopy: {
+            // Button row overlay (top-right)
+            HStack(spacing: 4) {
+                if let xml = drawioXML {
+                    DiagramButtonView(showSheet: $showDiagramSheet)
+                        .sheet(isPresented: $showDiagramSheet) {
+                            DrawioDiagramSheet(xmlContent: xml)
+                        }
+                }
+                CopyButtonView(isCopied: $isCopied) {
                     configuration.codeBlock.copyToPasteboard()
                 }
-            )
+            }
             .padding(.top, 8)
             .padding(.trailing, 12)
         }
     }
 }
 
+// "View Diagram" button
+private struct DiagramButtonView: View {
+    @Binding var showSheet: Bool
+    @Environment(\.appScaleManager) private var scaleManager
+
+    var body: some View {
+        Button(action: { showSheet = true }) {
+            Image(systemName: "rectangle.on.rectangle")
+                .font(.system(size: 13 * scaleManager.scale))
+                .foregroundStyle(.secondary)
+                .padding(6)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.9))
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help("View Diagram")
+    }
+}
+
 // Copy button view
 private struct CopyButtonView: View {
     @Binding var isCopied: Bool
-    @ObservedObject var scaleManager: AppScaleManager
+    @Environment(\.appScaleManager) private var scaleManager
     let onCopy: () -> Void
 
     var body: some View {
