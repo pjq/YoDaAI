@@ -165,17 +165,30 @@ struct ContentView: View {
     private func createNewChat() {
         let thread = ChatThread(title: "New Chat")
         modelContext.insert(thread)
-        try? modelContext.save()
         activeThread = thread
+
+        // Save changes (ModelContext must stay on its thread)
+        Task {
+            try? modelContext.save()
+        }
+
+        // Focus the composer after the new thread's view has rendered
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NotificationCenter.default.post(name: .focusComposer, object: nil)
+        }
     }
 
     private func deleteThread(_ thread: ChatThread) {
         let wasActive = activeThread?.id == thread.id
         modelContext.delete(thread)
-        try? modelContext.save()
 
         if wasActive {
             activeThread = threads.first(where: { $0.id != thread.id })
+        }
+
+        // Save changes (ModelContext must stay on its thread)
+        Task {
+            try? modelContext.save()
         }
     }
 }

@@ -669,6 +669,11 @@ final class ChatViewModel: ObservableObject {
         }
 
         for msg in limitedHistory {
+            // Skip messages with no content and no attachments — empty assistant placeholders
+            // can appear if a previous response was cancelled/deleted mid-stream
+            let hasContent = !msg.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if !hasContent && msg.attachments.isEmpty { continue }
+
             if msg.attachments.isEmpty {
                 // Text-only message (backward compatible)
                 requestMessages.append(OpenAIChatMessage(role: msg.roleRawValue, content: msg.content))

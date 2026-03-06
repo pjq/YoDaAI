@@ -13,7 +13,7 @@ struct ComposerView: View {
     @FocusState private var isFocused: Bool
     @State private var showFilePicker = false
     @State private var cachedHeight: CGFloat = 36  // Single line (20px) + padding (16px)
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     private var defaultProvider: LLMProvider? {
         providers.first(where: { $0.isDefault }) ?? providers.first
@@ -169,6 +169,13 @@ struct ComposerView: View {
             .padding(.vertical, 12)
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .onAppear {
+            // Focus input when the composer first appears (new thread or thread switch)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { isFocused = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .focusComposer)) { _ in
+            isFocused = true
+        }
         .onKeyPress(.escape) {
             if viewModel.isSending {
                 viewModel.stopGenerating()

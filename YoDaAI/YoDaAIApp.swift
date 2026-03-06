@@ -14,48 +14,61 @@ import ApplicationServices
 /// Manages the app-wide text scale level with persistence
 final class AppScaleManager: ObservableObject {
     static let shared = AppScaleManager()
-    
+
     @Published var scale: CGFloat {
         didSet {
             UserDefaults.standard.set(scale, forKey: "app_text_scale")
         }
     }
-    
+
     /// Available scale levels (as multipliers for base font size)
     static let scaleLevels: [CGFloat] = [0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.75, 2.0]
     static let minScale: CGFloat = 0.8
     static let maxScale: CGFloat = 2.0
     static let defaultScale: CGFloat = 1.0
-    
+
     private init() {
         self.scale = UserDefaults.standard.object(forKey: "app_text_scale") as? CGFloat ?? Self.defaultScale
     }
-    
+
     func zoomIn() {
         if let nextScale = Self.scaleLevels.first(where: { $0 > scale }) {
             scale = nextScale
         }
     }
-    
+
     func zoomOut() {
         if let nextScale = Self.scaleLevels.last(where: { $0 < scale }) {
             scale = nextScale
         }
     }
-    
+
     func resetZoom() {
         scale = Self.defaultScale
     }
-    
+
     var scalePercentage: Int {
         Int(scale * 100)
+    }
+}
+
+// MARK: - Environment Key for AppScaleManager
+// PERFORMANCE FIX: Use Environment instead of @ObservedObject for better SwiftUI optimization
+private struct AppScaleManagerKey: EnvironmentKey {
+    static let defaultValue: AppScaleManager = AppScaleManager.shared
+}
+
+extension EnvironmentValues {
+    var appScaleManager: AppScaleManager {
+        get { self[AppScaleManagerKey.self] }
+        set { self[AppScaleManagerKey.self] = newValue }
     }
 }
 
 // MARK: - Scaled Font View Modifier
 /// Applies text scale to all text in the view hierarchy
 struct ScaledFontModifier: ViewModifier {
-    @ObservedObject var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) var scaleManager
     
     func body(content: Content) -> some View {
         content
@@ -72,7 +85,7 @@ struct ScaledText: View {
     let baseSize: CGFloat
     let weight: Font.Weight
     let design: Font.Design
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
     
     init(_ content: String, size: CGFloat = 14, weight: Font.Weight = .regular, design: Font.Design = .default) {
         self.content = content
@@ -128,7 +141,7 @@ struct YoDaAIApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(scaleManager)
+                .environment(\.appScaleManager, scaleManager)
                 .environmentObject(settingsRouter)
         }
         .modelContainer(sharedModelContainer)
@@ -174,9 +187,10 @@ struct YoDaAIApp: App {
     }
 }
 
-// MARK: - Notification for New Chat
+// MARK: - Notification names
 extension Notification.Name {
     static let createNewChat = Notification.Name("createNewChat")
+    static let focusComposer  = Notification.Name("focusComposer")
 }
 
 // MARK: - Accessibility Permission Helper
