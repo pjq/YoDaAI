@@ -115,7 +115,9 @@ struct MessageRowView: View, Equatable {
                 }
 
                 let isStreamingAssistantMessage = (message.role == .assistant && streamingMessageID == message.id)
-                if !isStreamingAssistantMessage && isHovered {
+                // Always reserve space for action buttons to prevent layout shifts on hover.
+                // Use opacity to show/hide so the row height never changes.
+                if !isStreamingAssistantMessage {
                     HStack(spacing: 8) {
                         actionButton(
                             action: .copy,
@@ -126,7 +128,6 @@ struct MessageRowView: View, Equatable {
                         ) {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(message.content, forType: .string)
-
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                                 showCopiedFeedback = true
                             }
@@ -157,6 +158,8 @@ struct MessageRowView: View, Equatable {
                             showDeleteConfirmation = true
                         }
                     }
+                    .opacity(isHovered ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
                 }
             }
 
