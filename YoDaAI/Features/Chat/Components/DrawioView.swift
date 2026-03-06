@@ -290,8 +290,21 @@ struct DrawioDiagramView: View {
         panel.allowedContentTypes = [.png, .pdf]
         panel.canSelectHiddenExtension = true
 
-        // Run the panel attached to the key window
-        panel.begin { response in
+        // Present as a sheet on the containing window, or as a free-floating panel
+        let window = webView.window ?? NSApp.keyWindow
+        if let window {
+            panel.beginSheetModal(for: window) { response in
+                guard response == .OK, let url = panel.url else { return }
+                let ext = url.pathExtension.lowercased()
+                if ext == "pdf" {
+                    savePDF(to: url, webView: webView)
+                } else {
+                    savePNG(to: url, webView: webView)
+                }
+            }
+        } else {
+            // Fallback: run modally if no window available
+            let response = panel.runModal()
             guard response == .OK, let url = panel.url else { return }
             let ext = url.pathExtension.lowercased()
             if ext == "pdf" {
