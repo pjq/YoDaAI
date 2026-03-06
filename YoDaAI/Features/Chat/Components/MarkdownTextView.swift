@@ -7,7 +7,7 @@ import Textual
 /// Replaces ~275 lines of custom parsing with production-ready library
 struct MarkdownTextView: View {
     let content: String
-    /// When set, a "View Diagram" button is shown in the code block header (drawio XML blocks).
+    /// When set, a "Open Diagram" button is shown in the code block header (drawio XML blocks).
     var drawioXML: String? = nil
     @Environment(\.appScaleManager) private var scaleManager
 
@@ -36,50 +36,50 @@ private struct CustomCodeBlockView: View {
     @State private var isCopied = false
     @State private var showDiagramSheet = false
 
-    // Number of action buttons shown in the header overlay
-    private var buttonCount: Int { drawioXML != nil ? 2 : 1 }
-
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            // Main code block content
-            VStack(alignment: .leading, spacing: 0) {
-                // Header
-                HStack {
-                    if let language = configuration.languageHint, !language.isEmpty {
-                        Text(language)
-                            .font(.system(size: 11 * scaleManager.scale))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    // Reserve space for the button overlay so text doesn't underlap buttons
-                    Color.clear.frame(width: CGFloat(buttonCount) * 32, height: 24)
-                        .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: 0) {
+            // Header bar
+            HStack(spacing: 8) {
+                // Language label
+                if let language = configuration.languageHint, !language.isEmpty {
+                    Text(drawioXML != nil ? "draw.io" : language)
+                        .font(.system(size: 11 * scaleManager.scale, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
 
-                configuration.label
-                    .textual.lineSpacing(.fontScaled(0.39))
-                    .textual.fontScale(0.882 * scaleManager.scale)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .monospaced()
-                    .padding(12)
-            }
-            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+                Spacer()
 
-            // Button row overlay (top-right)
-            HStack(spacing: 4) {
+                // Draw.io: Open Diagram pill button
                 if let xml = drawioXML {
-                    DiagramButtonView(showSheet: $showDiagramSheet)
-                        .sheet(isPresented: $showDiagramSheet) {
-                            DrawioDiagramSheet(xmlContent: xml)
+                    Button {
+                        showDiagramSheet = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "flowchart")
+                                .font(.system(size: 11 * scaleManager.scale, weight: .medium))
+                            Text("Open Diagram")
+                                .font(.system(size: 11 * scaleManager.scale, weight: .medium))
                         }
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.1))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                    }
+                    .help("Open diagram viewer")
+                    .sheet(isPresented: $showDiagramSheet) {
+                        DrawioDiagramSheet(xmlContent: xml)
+                    }
                 }
+
+                // Copy button
                 CopyButtonView(isCopied: $isCopied) {
                     if let xml = drawioXML {
-                        // Strip XML declaration header — draw.io app can't parse it
                         let cleaned = xml.replacingOccurrences(
                             of: #"<\?xml[^?]*\?>\s*"#,
                             with: "",
@@ -92,31 +92,19 @@ private struct CustomCodeBlockView: View {
                     }
                 }
             }
-            .padding(.top, 8)
-            .padding(.trailing, 12)
-        }
-    }
-}
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
 
-// "View Diagram" button
-private struct DiagramButtonView: View {
-    @Binding var showSheet: Bool
-    @Environment(\.appScaleManager) private var scaleManager
-
-    var body: some View {
-        Button(action: { showSheet = true }) {
-            Image(systemName: "rectangle.on.rectangle")
-                .font(.system(size: 13 * scaleManager.scale))
-                .foregroundStyle(.secondary)
-                .padding(6)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.9))
-                .cornerRadius(4)
+            configuration.label
+                .textual.lineSpacing(.fontScaled(0.39))
+                .textual.fontScale(0.882 * scaleManager.scale)
+                .fixedSize(horizontal: false, vertical: true)
+                .monospaced()
+                .padding(12)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
-        .help("View Diagram")
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -135,19 +123,16 @@ private struct CopyButtonView: View {
             }
         }) {
             Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 13 * scaleManager.scale))
+                .font(.system(size: 12 * scaleManager.scale))
                 .foregroundStyle(isCopied ? .green : .secondary)
-                .padding(6)
+                .padding(5)
                 .background(Color(nsColor: .controlBackgroundColor).opacity(0.9))
                 .cornerRadius(4)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
+        .help(isCopied ? "Copied!" : "Copy code")
     }
 }
