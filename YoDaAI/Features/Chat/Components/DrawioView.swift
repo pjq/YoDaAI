@@ -151,6 +151,14 @@ struct DrawioDiagramView: View {
 
             Spacer()
 
+            // Copy XML
+            toolbarActionButton(systemImage: "doc.on.doc", label: "Copy XML") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(stripXMLDeclaration(xmlContent), forType: .string)
+            }
+
+            Divider().frame(height: 20).padding(.horizontal, 8)
+
             // Copy as image
             toolbarActionButton(
                 systemImage: copyImageFeedback ? "checkmark" : "photo.on.rectangle",
