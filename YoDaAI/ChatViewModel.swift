@@ -506,31 +506,57 @@ final class ChatViewModel: ObservableObject {
 
         do {
             try Task.checkCancellation()
-            
+
             let provider = try ensureDefaultProvider(in: context)
-            
-            // Delete all messages after this one
+
+            // Sort all messages chronologically
             let sortedMessages = thread.messages.sorted { $0.createdAt < $1.createdAt }
-            var shouldDelete = false
+
+            // Determine which messages to keep:
+            // - Retrying an assistant message: keep everything BEFORE it (the user message stays)
+            // - Retrying a user message: keep everything BEFORE it (re-send from that point)
+            var messagesToDelete: [ChatMessage] = []
+            var found = false
             for msg in sortedMessages {
-                if shouldDelete {
-                    context.delete(msg)
+                if found {
+                    messagesToDelete.append(msg)
                 } else if msg.id == message.id {
-                    shouldDelete = true
-                    // If it's a user message, keep it; if assistant, delete it too
+                    found = true
+                    // Delete the target message itself if it's an assistant message
                     if message.role == .assistant {
-                        context.delete(msg)
+                        messagesToDelete.append(msg)
                     }
                 }
             }
 
-            // Save changes after deleting messages
-            // Note: ModelContext must stay on its thread (main), use Task not Task.detached
-            Task {
-                try? context.save()
+            // Record the cutoff date BEFORE deleting, so sendAssistantResponse
+            // can exclude these messages even if the save hasn't propagated yet.
+            // For an assistant message: history = everything before it (its user prompt stays).
+            // For a user message: history = everything up to AND including it (re-send from that point).
+            let cutoffDate: Date?
+            if message.role == .assistant {
+                // Exclude the assistant message and everything after it
+                cutoffDate = message.createdAt
+            } else {
+                // Exclude only messages strictly after this user message
+                // (the user message itself should remain as the last history entry)
+                cutoffDate = nil  // no cutoff needed — messages after are already deleted
             }
 
-            try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
+            for msg in messagesToDelete {
+                context.delete(msg)
+            }
+
+            // Save the deletions synchronously on the main context before building history
+            try? context.save()
+
+            try await sendAssistantResponse(
+                for: thread,
+                provider: provider,
+                mentionedApps: [],
+                historyBefore: cutoffDate,
+                in: context
+            )
         } catch is CancellationError {
             print("[ChatViewModel] Retry from message cancelled by user")
         } catch {
@@ -547,12 +573,23 @@ final class ChatViewModel: ObservableObject {
         }
     }
     
-    private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], cachedContexts: [String: AppContextSnapshot] = [:], in context: ModelContext) async throws {
+    private func sendAssistantResponse(
+        for thread: ChatThread,
+        provider: LLMProvider,
+        mentionedApps: [RunningApp] = [],
+        cachedContexts: [String: AppContextSnapshot] = [:],
+        historyBefore cutoffDate: Date? = nil,
+        in context: ModelContext
+    ) async throws {
         let settings = LLMSettings.shared
 
-        // PERFORMANCE FIX: Get messages directly from relationship (already in memory)
-        // Since MessageListView now uses thread.messages, they should already be loaded
-        let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
+        // Build history from thread messages.
+        // If a cutoff date was provided (retry path), exclude messages at/after that date.
+        // This prevents deleted messages that haven't fully propagated from appearing in the request.
+        var history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
+        if let cutoff = cutoffDate {
+            history = history.filter { $0.createdAt < cutoff }
+        }
 
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
@@ -715,12 +752,12 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
-        // DEBUG: Log final message order to verify system messages come first
-        print("[ChatViewModel] === FINAL MESSAGE ORDER ===")
-        for (index, msg) in requestMessages.enumerated() {
-            print("[ChatViewModel] Message \(index): role=\(msg.role)")
+        // Log final message sequence — last message must always be "user"
+        let roles = requestMessages.map { $0.role }
+        print("[ChatViewModel] Request sequence (\(roles.count) msgs): \(roles.joined(separator: " → "))")
+        if let lastRole = roles.last, lastRole != "user" {
+            print("[ChatViewModel] ⚠️ WARNING: last message is '\(lastRole)', API may return 400!")
         }
-        print("[ChatViewModel] ============================")
 
         // Create empty assistant message for streaming
         let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread, attachments: [], appContexts: [])
