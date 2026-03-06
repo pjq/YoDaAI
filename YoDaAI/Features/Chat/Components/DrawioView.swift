@@ -123,6 +123,8 @@ struct DrawioDiagramSheet: View {
     private func copyAsImage() {
         guard let webView = webViewRef else { return }
         let config = WKSnapshotConfiguration()
+        // Capture only the visible viewport bounds, not the full document
+        config.rect = CGRect(origin: .zero, size: webView.bounds.size)
         webView.takeSnapshot(with: config) { image, error in
             guard let image else {
                 print("[DrawioView] Snapshot error: \(error?.localizedDescription ?? "unknown")")
