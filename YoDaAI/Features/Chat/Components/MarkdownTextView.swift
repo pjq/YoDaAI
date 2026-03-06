@@ -34,7 +34,6 @@ private struct CustomCodeBlockView: View {
     let drawioXML: String?
     @Environment(\.appScaleManager) private var scaleManager
     @State private var isCopied = false
-    @State private var showDiagramSheet = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -52,7 +51,7 @@ private struct CustomCodeBlockView: View {
                 // Draw.io: Open Diagram pill button
                 if let xml = drawioXML {
                     Button {
-                        showDiagramSheet = true
+                        openDiagramWindow(xmlContent: xml)
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "flowchart")
@@ -72,9 +71,6 @@ private struct CustomCodeBlockView: View {
                         if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                     }
                     .help("Open diagram viewer")
-                    .sheet(isPresented: $showDiagramSheet) {
-                        DrawioDiagramSheet(xmlContent: xml)
-                    }
                 }
 
                 // Copy button

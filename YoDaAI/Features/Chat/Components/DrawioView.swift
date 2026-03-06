@@ -1,15 +1,15 @@
 import SwiftUI
 import WebKit
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - DrawioView (plain-text mode fallback button)
 
 struct DrawioView: View {
     let xmlContent: String
-    @State private var showSheet = false
 
     var body: some View {
-        Button(action: { showSheet = true }) {
+        Button(action: { openDiagramWindow(xmlContent: xmlContent) }) {
             HStack(spacing: 6) {
                 Image(systemName: "flowchart")
                     .font(.system(size: 12, weight: .medium))
@@ -24,21 +24,83 @@ struct DrawioView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
-        .sheet(isPresented: $showSheet) {
-            DrawioDiagramSheet(xmlContent: xmlContent)
-        }
     }
 }
 
-// MARK: - DrawioDiagramSheet
+// MARK: - Open diagram in a real resizable NSWindow
 
+func openDiagramWindow(xmlContent: String) {
+    let controller = DrawioDiagramWindowController(xmlContent: xmlContent)
+    controller.showWindow(nil)
+    controller.window?.makeKeyAndOrderFront(nil)
+    // Retain the controller until the window closes
+    DrawioDiagramWindowController.retain(controller)
+}
+
+// MARK: - DrawioDiagramWindowController
+
+final class DrawioDiagramWindowController: NSWindowController, NSWindowDelegate {
+    /// Keep controllers alive until their window closes.
+    private static var retainedControllers: [DrawioDiagramWindowController] = []
+
+    static func retain(_ c: DrawioDiagramWindowController) {
+        retainedControllers.append(c)
+    }
+
+    init(xmlContent: String) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 860, height: 620),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Diagram"
+        window.titlebarAppearsTransparent = false
+        window.isMovableByWindowBackground = true
+        window.setFrameAutosaveName("DrawioDiagramWindow")
+        window.minSize = NSSize(width: 560, height: 420)
+        window.center()
+
+        super.init(window: window)
+        window.delegate = self
+
+        let view = DrawioDiagramView(xmlContent: xmlContent, onClose: { [weak self] in
+            self?.close()
+        })
+        window.contentView = NSHostingView(rootView: view)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func windowWillClose(_ notification: Notification) {
+        DrawioDiagramWindowController.retainedControllers.removeAll { $0 === self }
+    }
+}
+
+// MARK: - DrawioDiagramSheet (SwiftUI sheet — used from MarkdownTextView code blocks)
+
+/// Presented as a SwiftUI .sheet from within a code block button.
 struct DrawioDiagramSheet: View {
     let xmlContent: String
     @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        DrawioDiagramView(xmlContent: xmlContent, onClose: { dismiss() })
+            .frame(minWidth: 760, minHeight: 540)
+    }
+}
+
+// MARK: - DrawioDiagramView (shared content)
+
+struct DrawioDiagramView: View {
+    let xmlContent: String
+    var onClose: (() -> Void)? = nil
+
     @State private var isLoading = true
     @State private var webViewRef: WKWebView? = nil
     @State private var copyImageFeedback = false
-    @State private var zoomLevel = 1.0  // Tracked for display only
+    @State private var savePanel: NSSavePanel? = nil
+    @State private var zoomLevel = 1.0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,7 +108,6 @@ struct DrawioDiagramSheet: View {
             Divider()
             diagramArea
         }
-        .frame(minWidth: 760, minHeight: 540)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -66,15 +127,15 @@ struct DrawioDiagramSheet: View {
 
             Divider().frame(height: 20)
 
-            // Zoom controls — segmented style
+            // Zoom controls
             HStack(spacing: 1) {
-                zoomButton(systemImage: "minus", help: "Zoom Out (−)") {
+                zoomButton(systemImage: "minus", help: "Zoom Out") {
                     webViewRef?.evaluateJavaScript("graph.zoomOut(); window.webkit.messageHandlers.zoom.postMessage(graph.view.scale);", completionHandler: nil)
                 }
                 zoomButton(systemImage: "arrow.up.left.and.arrow.down.right", help: "Reset Zoom") {
                     webViewRef?.evaluateJavaScript("graph.fit(); graph.center(true,true); window.webkit.messageHandlers.zoom.postMessage(graph.view.scale);", completionHandler: nil)
                 }
-                zoomButton(systemImage: "plus", help: "Zoom In (+)") {
+                zoomButton(systemImage: "plus", help: "Zoom In") {
                     webViewRef?.evaluateJavaScript("graph.zoomIn(); window.webkit.messageHandlers.zoom.postMessage(graph.view.scale);", completionHandler: nil)
                 }
             }
@@ -82,7 +143,6 @@ struct DrawioDiagramSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
 
-            // Zoom percentage label
             Text("\(Int(zoomLevel * 100))%")
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -102,6 +162,13 @@ struct DrawioDiagramSheet: View {
 
             Divider().frame(height: 20).padding(.horizontal, 8)
 
+            // Save as…
+            toolbarActionButton(systemImage: "square.and.arrow.down", label: "Save As…") {
+                saveAsImage()
+            }
+
+            Divider().frame(height: 20).padding(.horizontal, 8)
+
             // Open in draw.io
             toolbarActionButton(systemImage: "arrow.up.right.square", label: "Open in draw.io") {
                 openInDrawio()
@@ -110,16 +177,18 @@ struct DrawioDiagramSheet: View {
             Divider().frame(height: 20).padding(.horizontal, 8)
 
             // Close
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(Circle())
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Close")
             }
-            .buttonStyle(.plain)
-            .help("Close")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -129,17 +198,13 @@ struct DrawioDiagramSheet: View {
 
     private var diagramArea: some View {
         ZStack {
-            // Subtle grid background while loading or as canvas feel
             Color(nsColor: .textBackgroundColor)
-
             DrawioWebView(xmlContent: xmlContent, isLoading: $isLoading, webViewRef: $webViewRef, zoomLevel: $zoomLevel)
-
             if isLoading {
                 ZStack {
                     Color(nsColor: .windowBackgroundColor).opacity(0.92)
                     VStack(spacing: 14) {
-                        ProgressView()
-                            .scaleEffect(1.2)
+                        ProgressView().scaleEffect(1.2)
                         Text("Rendering diagram…")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
@@ -184,7 +249,6 @@ struct DrawioDiagramSheet: View {
     // MARK: - Actions
 
     private func openInDrawio() {
-        // Strip XML declaration before opening — draw.io web app can't handle it
         let cleaned = stripXMLDeclaration(xmlContent)
         let encoded = cleaned.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         if let url = URL(string: "https://app.diagrams.net/?src=about#xml=\(encoded)") {
@@ -197,16 +261,67 @@ struct DrawioDiagramSheet: View {
         let config = WKSnapshotConfiguration()
         config.rect = CGRect(origin: .zero, size: webView.bounds.size)
         webView.takeSnapshot(with: config) { image, error in
-            guard let image else {
-                print("[DrawioView] Snapshot error: \(error?.localizedDescription ?? "unknown")")
-                return
-            }
+            guard let image else { return }
             DispatchQueue.main.async {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.writeObjects([image])
                 withAnimation(.easeInOut(duration: 0.15)) { copyImageFeedback = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation(.easeOut(duration: 0.2)) { copyImageFeedback = false }
+                }
+            }
+        }
+    }
+
+    private func saveAsImage() {
+        guard let webView = webViewRef else { return }
+
+        let panel = NSSavePanel()
+        panel.title = "Save Diagram"
+        panel.nameFieldStringValue = "diagram"
+        panel.allowedContentTypes = [.png, .pdf]
+        panel.canSelectHiddenExtension = true
+
+        // Run the panel attached to the key window
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let ext = url.pathExtension.lowercased()
+            if ext == "pdf" {
+                savePDF(to: url, webView: webView)
+            } else {
+                savePNG(to: url, webView: webView)
+            }
+        }
+    }
+
+    private func savePNG(to url: URL, webView: WKWebView) {
+        let config = WKSnapshotConfiguration()
+        config.rect = CGRect(origin: .zero, size: webView.bounds.size)
+        webView.takeSnapshot(with: config) { image, error in
+            guard let image else {
+                print("[DrawioView] Snapshot error: \(error?.localizedDescription ?? "unknown")")
+                return
+            }
+            DispatchQueue.main.async {
+                if let tiff = image.tiffRepresentation,
+                   let bitmap = NSBitmapImageRep(data: tiff),
+                   let png = bitmap.representation(using: .png, properties: [:]) {
+                    try? png.write(to: url)
+                }
+            }
+        }
+    }
+
+    private func savePDF(to url: URL, webView: WKWebView) {
+        let config = WKPDFConfiguration()
+        config.rect = CGRect(origin: .zero, size: webView.bounds.size)
+        webView.createPDF(configuration: config) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let data):
+                    try? data.write(to: url)
+                case .failure(let error):
+                    print("[DrawioView] PDF error: \(error)")
                 }
             }
         }
@@ -241,8 +356,6 @@ private struct DrawioWebView: NSViewRepresentable {
 
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 
-    // MARK: - mxClient.min.js (loaded once from bundle)
-
     private static let mxClientJS: String = {
         guard let url = Bundle.main.url(forResource: "mxClient.min", withExtension: "js"),
               let js = try? String(contentsOf: url, encoding: .utf8) else {
@@ -274,21 +387,12 @@ private struct DrawioWebView: NSViewRepresentable {
             * { margin: 0; padding: 0; box-sizing: border-box; }
             html, body {
               width: 100%; height: 100%;
-              background: #fafafa;
-              overflow: hidden;
-            }
-            /* Subtle dot-grid canvas background */
-            body {
               background-image: radial-gradient(circle, #d0d0d0 1px, transparent 1px);
               background-size: 20px 20px;
               background-color: #fafafa;
+              overflow: hidden;
             }
-            #graph {
-              width: 100%; height: 100%;
-              background: transparent;
-            }
-            /* mxGraph SVG drop shadow for cells */
-            .mxCellEditor { font-family: -apple-system, sans-serif; }
+            #graph { width: 100%; height: 100%; background: transparent; }
           </style>
         </head>
         <body>
@@ -320,7 +424,6 @@ private struct DrawioWebView: NSViewRepresentable {
               window.graph.setBorder(32);
               window.graph.setHtmlLabels(true);
 
-              // Enable mouse wheel zoom
               mxEvent.addMouseWheelListener(function(evt, up) {
                 if (up) { window.graph.zoomIn(); } else { window.graph.zoomOut(); }
                 window.webkit.messageHandlers.zoom.postMessage(window.graph.view.scale);
@@ -353,8 +456,6 @@ private struct DrawioWebView: NSViewRepresentable {
         """
     }
 
-    // MARK: - Coordinator
-
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         @Binding var isLoading: Bool
         @Binding var zoomLevel: Double
@@ -366,23 +467,18 @@ private struct DrawioWebView: NSViewRepresentable {
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             switch message.name {
-            case "log":
-                print("[DrawioView] \(message.body)")
-            case "ready":
-                DispatchQueue.main.async { self.isLoading = false }
+            case "log":   print("[DrawioView] \(message.body)")
+            case "ready": DispatchQueue.main.async { self.isLoading = false }
             case "zoom":
                 if let scale = message.body as? Double {
                     DispatchQueue.main.async { self.zoomLevel = scale }
                 }
-            default:
-                break
+            default: break
             }
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                self.isLoading = false
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.isLoading = false }
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
