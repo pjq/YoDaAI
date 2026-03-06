@@ -271,8 +271,11 @@ struct DrawioDiagramView: View {
         webView.takeSnapshot(with: config) { image, error in
             guard let image else { return }
             DispatchQueue.main.async {
+                // Write as TIFF data — NSImage doesn't directly implement NSPasteboardWriting
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([image])
+                if let tiff = image.tiffRepresentation {
+                    NSPasteboard.general.setData(tiff, forType: .tiff)
+                }
                 withAnimation(.easeInOut(duration: 0.15)) { copyImageFeedback = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation(.easeOut(duration: 0.2)) { copyImageFeedback = false }
