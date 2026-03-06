@@ -185,7 +185,7 @@ struct DrawioDiagramSheet: View {
 
     private func openInDrawio() {
         // Strip XML declaration before opening — draw.io web app can't handle it
-        let cleaned = xmlContent.replacingOccurrences(of: #"<\?xml[^?]*\?>\s*"#, with: "", options: .regularExpression)
+        let cleaned = stripXMLDeclaration(xmlContent)
         let encoded = cleaned.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         if let url = URL(string: "https://app.diagrams.net/?src=about#xml=\(encoded)") {
             NSWorkspace.shared.open(url)

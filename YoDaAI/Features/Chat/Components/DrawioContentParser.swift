@@ -97,6 +97,22 @@ private func isExplicitDrawioFence(_ match: NSTextCheckingResult, in content: St
     return fence.hasPrefix("```drawio")
 }
 
+// MARK: - XML Declaration Stripping
+
+/// Safely removes the `<?xml ... ?>` processing instruction from the start of an XML string.
+/// Uses plain string scanning instead of regex to avoid crashes on unusual Unicode content.
+func stripXMLDeclaration(_ xml: String) -> String {
+    let trimmed = xml.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("<?xml") else { return xml }
+    // Find the closing '?>' and drop everything up to and including it
+    if let closeRange = trimmed.range(of: "?>") {
+        let after = trimmed[closeRange.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return after.isEmpty ? xml : after
+    }
+    return xml
+}
+
 // MARK: - Tool Call Stripping
 
 private let toolCallStripRegex: NSRegularExpression? = {

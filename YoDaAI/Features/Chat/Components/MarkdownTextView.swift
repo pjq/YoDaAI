@@ -80,13 +80,8 @@ private struct CustomCodeBlockView: View {
                 // Copy button
                 CopyButtonView(isCopied: $isCopied) {
                     if let xml = drawioXML {
-                        let cleaned = xml.replacingOccurrences(
-                            of: #"<\?xml[^?]*\?>\s*"#,
-                            with: "",
-                            options: .regularExpression
-                        )
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(cleaned, forType: .string)
+                        NSPasteboard.general.setString(stripXMLDeclaration(xml), forType: .string)
                     } else {
                         configuration.codeBlock.copyToPasteboard()
                     }
