@@ -446,15 +446,14 @@ extension MCPToolRegistry {
         }
         
         var results: [(name: String, arguments: [String: Any]?)] = []
-        let range = NSRange(text.startIndex..., in: text)
-        
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+
         regex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
             guard let match = match,
-                  let jsonRange = Range(match.range(at: 1), in: text) else {
-                return
-            }
-            
-            let jsonString = String(text[jsonRange])
+                  match.range(at: 1).location != NSNotFound else { return }
+
+            let jsonString = nsText.substring(with: match.range(at: 1))
             
             guard let data = jsonString.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -477,31 +476,30 @@ extension MCPToolRegistry {
         }
         
         var results: [(name: String, arguments: [String: Any]?)] = []
-        let range = NSRange(text.startIndex..., in: text)
-        
+        let nsText = text as NSString
+        let range = NSRange(location: 0, length: nsText.length)
+
         invokeRegex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
             guard let match = match,
-                  let nameRange = Range(match.range(at: 1), in: text),
-                  let paramsRange = Range(match.range(at: 2), in: text) else {
-                return
-            }
-            
-            let toolName = String(text[nameRange])
-            let paramsText = String(text[paramsRange])
-            
+                  match.range(at: 1).location != NSNotFound,
+                  match.range(at: 2).location != NSNotFound else { return }
+
+            // Use NSString substringing throughout to avoid UTF-16 index misalignment
+            let toolName = nsText.substring(with: match.range(at: 1))
+            let paramsText = nsText.substring(with: match.range(at: 2))
+            let nsParams = paramsText as NSString
+
             // Parse parameters
             var arguments: [String: Any] = [:]
-            let paramsNSRange = NSRange(paramsText.startIndex..., in: paramsText)
-            
+            let paramsNSRange = NSRange(location: 0, length: nsParams.length)
+
             paramRegex.enumerateMatches(in: paramsText, options: [], range: paramsNSRange) { paramMatch, _, _ in
                 guard let paramMatch = paramMatch,
-                      let paramNameRange = Range(paramMatch.range(at: 1), in: paramsText),
-                      let paramValueRange = Range(paramMatch.range(at: 2), in: paramsText) else {
-                    return
-                }
-                
-                let paramName = String(paramsText[paramNameRange])
-                let paramValue = String(paramsText[paramValueRange])
+                      paramMatch.range(at: 1).location != NSNotFound,
+                      paramMatch.range(at: 2).location != NSNotFound else { return }
+
+                let paramName = nsParams.substring(with: paramMatch.range(at: 1))
+                let paramValue = nsParams.substring(with: paramMatch.range(at: 2))
                 arguments[paramName] = paramValue
             }
             

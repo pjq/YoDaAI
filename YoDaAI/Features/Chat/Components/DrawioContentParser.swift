@@ -47,10 +47,11 @@ func parseDrawioSegments(_ content: String) -> [ContentSegment] {
             }
         }
 
-        // The code block content
-        if captureRange.location != NSNotFound, let swiftRange = Range(captureRange, in: content) {
-            let xml = String(content[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let explicitDrawio = isExplicitDrawioFence(match, in: content)
+        // The code block content — use NSString to avoid UTF-16 index misalignment on emoji
+        if captureRange.location != NSNotFound {
+            let xml = nsContent.substring(with: captureRange).trimmingCharacters(in: .whitespacesAndNewlines)
+            let fenceStr = nsContent.substring(with: matchRange)
+            let explicitDrawio = fenceStr.hasPrefix("```drawio")
             // For explicit ```drawio fences, always treat as diagram.
             // For ```xml fences, require content to look like mxGraph XML.
             let isDrawioBlock = explicitDrawio || isDrawioXML(xml)
@@ -58,8 +59,7 @@ func parseDrawioSegments(_ content: String) -> [ContentSegment] {
                 segments.append(.drawio(xml: xml))
             } else {
                 // Not valid diagram XML — restore original fenced block as text
-                let original = nsContent.substring(with: matchRange)
-                segments.append(.text(original))
+                segments.append(.text(fenceStr))
             }
         }
 
@@ -91,11 +91,6 @@ private func isDrawioXML(_ xml: String) -> Bool {
     return false
 }
 
-private func isExplicitDrawioFence(_ match: NSTextCheckingResult, in content: String) -> Bool {
-    guard let range = Range(match.range, in: content) else { return false }
-    let fence = String(content[range])
-    return fence.hasPrefix("```drawio")
-}
 
 // MARK: - XML Declaration Stripping
 
