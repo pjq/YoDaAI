@@ -39,6 +39,9 @@ struct MessageListView: View {
     @State private var isAtBottom = true
     @State private var showScrollToBottom = false
 
+    /// Tracker instance held in state so we can call scrollToBottom on it directly.
+    @State private var scrollTracker = ScrollPositionTracker.Coordinator()
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ScrollViewReader { proxy in
@@ -76,7 +79,11 @@ struct MessageListView: View {
                     .padding(.vertical, 20)
                 }
                 .background(
-                    ScrollPositionTracker(isAtBottom: $isAtBottom, showScrollToBottom: $showScrollToBottom)
+                    ScrollPositionTrackerView(
+                        coordinator: scrollTracker,
+                        isAtBottom: $isAtBottom,
+                        showScrollToBottom: $showScrollToBottom
+                    )
                 )
                 // New message added — scroll only if already at bottom
                 .onChange(of: messages.count) {
@@ -84,37 +91,46 @@ struct MessageListView: View {
                         scrollToBottom(proxy: proxy, animated: true)
                     }
                 }
-                // Streaming started — reload list to show new assistant row, scroll if at bottom
+                // Streaming started → reload list for new row + start smooth auto-scroll
+                // Streaming ended → stop auto-scroll
                 .onChange(of: viewModel.streamingMessageID) { _, newID in
-                    if newID != nil {
-                        updateTask?.cancel()
-                        updateTask = Task { @MainActor in
-                            displayedMessages = MessageDisplayData.loadMessages(from: thread)
+                    updateTask?.cancel()
+                    updateTask = Task { @MainActor in
+                        displayedMessages = MessageDisplayData.loadMessages(from: thread)
+                        if newID != nil {
+                            // Start streaming: scroll to bottom immediately, then keep tracking
                             if isAtBottom {
                                 scrollToBottom(proxy: proxy, animated: true)
                             }
+                            scrollTracker.startStreamingScroll()
+                        } else {
+                            // Streaming finished
+                            scrollTracker.stopStreamingScroll()
                         }
                     }
                 }
                 // Send started/finished — reload and scroll only if at bottom
-                .onChange(of: viewModel.isSending) { _, _ in
+                .onChange(of: viewModel.isSending) { _, newVal in
                     updateTask?.cancel()
                     updateTask = Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
                         if isAtBottom {
                             scrollToBottom(proxy: proxy, animated: true)
                         }
+                        if !newVal {
+                            scrollTracker.stopStreamingScroll()
+                        }
                     }
                 }
                 .onAppear {
                     Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
-                        // Jump instantly on first load
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
                 .onChange(of: thread.id) { _, _ in
                     updateTask?.cancel()
+                    scrollTracker.stopStreamingScroll()
                     isAtBottom = true
                     showScrollToBottom = false
                     Task { @MainActor in
@@ -129,6 +145,7 @@ struct MessageListView: View {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ScrollToBottom"))) { _ in
                     isAtBottom = true
+                    scrollTracker.stopStreamingScroll()
                     scrollToBottom(proxy: proxy, animated: true)
                 }
             }
@@ -157,7 +174,7 @@ struct MessageListView: View {
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
         if animated {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(.easeOut(duration: 0.25)) {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
         } else {
@@ -168,16 +185,17 @@ struct MessageListView: View {
 
 // MARK: - Scroll Position Tracker
 
-/// Hooks into the underlying NSScrollView to accurately detect whether the user
-/// is at the bottom. This avoids false positives from container resize events.
-private struct ScrollPositionTracker: NSViewRepresentable {
+/// NSViewRepresentable wrapper that injects a pre-created Coordinator into the view hierarchy.
+private struct ScrollPositionTrackerView: NSViewRepresentable {
+    let coordinator: ScrollPositionTracker.Coordinator
     @Binding var isAtBottom: Bool
     @Binding var showScrollToBottom: Bool
+
+    func makeCoordinator() -> ScrollPositionTracker.Coordinator { coordinator }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         context.coordinator.bind(isAtBottom: $isAtBottom, showScrollToBottom: $showScrollToBottom)
-        // Attach to scroll view after layout
         DispatchQueue.main.async {
             context.coordinator.attachToScrollView(from: view)
         }
@@ -185,14 +203,22 @@ private struct ScrollPositionTracker: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+/// Coordinator that hooks into the underlying NSScrollView for:
+/// 1. Tracking user scroll position (live scroll only, no layout-triggered jumps)
+/// 2. Smooth streaming auto-scroll using CVDisplayLink (60 fps)
+private struct ScrollPositionTracker {
 
     final class Coordinator: NSObject {
         private var isAtBottom: Binding<Bool>?
         private var showScrollToBottom: Binding<Bool>?
         private weak var scrollView: NSScrollView?
-        private var observer: NSObjectProtocol?
+        private var liveScrollObserver: NSObjectProtocol?
+
+        // Timer fires every ~16ms (≈60fps) during streaming for smooth auto-scroll
+        private var streamTimer: Timer?
+        private var isStreamingScrolling = false
 
         func bind(isAtBottom: Binding<Bool>, showScrollToBottom: Binding<Bool>) {
             self.isAtBottom = isAtBottom
@@ -205,12 +231,18 @@ private struct ScrollPositionTracker: NSViewRepresentable {
                 if let sv = v as? NSScrollView {
                     scrollView = sv
                     // Only respond to live user scroll gestures — NOT layout/bounds changes
-                    observer = NotificationCenter.default.addObserver(
+                    liveScrollObserver = NotificationCenter.default.addObserver(
                         forName: NSScrollView.didLiveScrollNotification,
                         object: sv,
                         queue: .main
                     ) { [weak self] _ in
-                        self?.handleLiveScroll(sv)
+                        guard let self else { return }
+                        self.handleLiveScroll(sv)
+                        // If user scrolls up during streaming, stop auto-scroll
+                        if self.isStreamingScrolling {
+                            let dist = self.distanceFromBottom(sv)
+                            if dist > 80 { self.stopStreamingScroll() }
+                        }
                     }
                     break
                 }
@@ -218,14 +250,53 @@ private struct ScrollPositionTracker: NSViewRepresentable {
             }
         }
 
-        private func handleLiveScroll(_ sv: NSScrollView) {
+        // MARK: Streaming scroll
+
+        /// Start a ~60fps timer that continuously scrolls to bottom during streaming.
+        /// Each tick animates a short easing curve so motion is butter-smooth.
+        func startStreamingScroll() {
+            guard !isStreamingScrolling else { return }
+            isStreamingScrolling = true
+            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+                self?.scrollToBottomNow()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            streamTimer = timer
+        }
+
+        func stopStreamingScroll() {
+            isStreamingScrolling = false
+            streamTimer?.invalidate()
+            streamTimer = nil
+        }
+
+        // MARK: Helpers
+
+        private func scrollToBottomNow() {
+            guard let sv = scrollView,
+                  let docView = sv.documentView else { return }
+            let maxY = max(0, docView.frame.height - sv.contentView.bounds.height)
+            let currentY = sv.contentView.bounds.origin.y
+            guard maxY > currentY + 1 else { return }  // already at bottom
+            // Use NSAnimationContext for smooth per-frame easing
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.1
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                sv.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: maxY))
+                sv.reflectScrolledClipView(sv.contentView)
+            }
+        }
+
+        private func distanceFromBottom(_ sv: NSScrollView) -> CGFloat {
             let contentHeight = sv.documentView?.frame.height ?? 0
             let visibleHeight = sv.contentView.bounds.height
             let offsetY = sv.contentView.bounds.origin.y
-            let distanceFromBottom = contentHeight - visibleHeight - offsetY
-            // User is considered "at bottom" within 60pt — generous to avoid false negatives
-            let atBottom = distanceFromBottom < 60
+            return contentHeight - visibleHeight - offsetY
+        }
 
+        private func handleLiveScroll(_ sv: NSScrollView) {
+            let dist = distanceFromBottom(sv)
+            let atBottom = dist < 60
             if isAtBottom?.wrappedValue != atBottom {
                 isAtBottom?.wrappedValue = atBottom
             }
@@ -238,7 +309,8 @@ private struct ScrollPositionTracker: NSViewRepresentable {
         }
 
         deinit {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
+            streamTimer?.invalidate()
+            if let obs = liveScrollObserver { NotificationCenter.default.removeObserver(obs) }
         }
     }
 }
