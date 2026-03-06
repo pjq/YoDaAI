@@ -4,7 +4,7 @@ import SwiftData
 /// Thread row view displayed in the sidebar
 struct ThreadRowView: View {
     let thread: ChatThread
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
         HStack(spacing: 10) {

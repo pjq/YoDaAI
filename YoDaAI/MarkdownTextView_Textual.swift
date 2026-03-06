@@ -14,7 +14,7 @@ import Textual
 /// Replaces ~275 lines of custom parsing with production-ready library
 struct TextualMarkdownView: View {
     let content: String
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
         // Note: Exact API will be determined once package is added

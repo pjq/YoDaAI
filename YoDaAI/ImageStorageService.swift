@@ -16,7 +16,6 @@ enum ImageStorageError: Error {
     case invalidURL
 }
 
-@MainActor
 final class ImageStorageService {
     static let shared = ImageStorageService()
 
@@ -30,7 +29,7 @@ final class ImageStorageService {
     private init() {}
 
     /// Get the app's image storage directory (creates if needed)
-    func getImageStorageDirectory() throws -> URL {
+    nonisolated func getImageStorageDirectory() throws -> URL {
         let fileManager = FileManager.default
         guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
             throw ImageStorageError.invalidURL
@@ -47,67 +46,74 @@ final class ImageStorageService {
     }
 
     /// Save image data to disk, returns file metadata
-    func saveImage(data: Data, originalFileName: String? = nil) throws -> (filePath: String, fileName: String, mimeType: String, fileSize: Int, dimensions: (width: Int, height: Int)?) {
-        // Validate file size
-        let fileSizeBytes = data.count
-        guard fileSizeBytes <= maxFileSizeMB * 1024 * 1024 else {
-            throw ImageStorageError.fileSizeTooLarge
-        }
+    nonisolated func saveImage(data: Data, originalFileName: String? = nil) async throws -> (filePath: String, fileName: String, mimeType: String, fileSize: Int, dimensions: (width: Int, height: Int)?) {
+        return try await Task.detached {
+            // Validate file size
+            let fileSizeBytes = data.count
+            let maxSize = self.maxFileSizeMB * 1024 * 1024
+            guard fileSizeBytes <= maxSize else {
+                throw ImageStorageError.fileSizeTooLarge
+            }
 
-        // Validate image format and get dimensions
-        guard let nsImage = NSImage(data: data) else {
-            throw ImageStorageError.invalidImageData
-        }
+            // Validate image format and get dimensions
+            guard let nsImage = NSImage(data: data) else {
+                throw ImageStorageError.invalidImageData
+            }
 
-        let dimensions = (width: Int(nsImage.size.width), height: Int(nsImage.size.height))
+            let dimensions = (width: Int(nsImage.size.width), height: Int(nsImage.size.height))
 
-        // Determine MIME type from data
-        let mimeType = getMimeType(from: data)
-        let fileExtension = getFileExtension(from: mimeType)
+            // Determine MIME type from data
+            let mimeType = self.getMimeType(from: data)
+            let fileExtension = self.getFileExtension(from: mimeType)
 
-        // Generate unique filename
-        let fileName = "\(UUID().uuidString).\(fileExtension)"
+            // Generate unique filename
+            let fileName = "\(UUID().uuidString).\(fileExtension)"
 
-        // Get storage directory and save file
-        let storageDir = try getImageStorageDirectory()
-        let fileURL = storageDir.appendingPathComponent(fileName)
+            // Get storage directory and save file
+            let storageDir = try self.getImageStorageDirectory()
+            let fileURL = storageDir.appendingPathComponent(fileName)
 
-        do {
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            throw ImageStorageError.storageError(error)
-        }
+            do {
+                try data.write(to: fileURL, options: .atomic)
+            } catch {
+                throw ImageStorageError.storageError(error)
+            }
 
-        // Return relative path (just filename, since all images are in same directory)
-        return (filePath: fileName, fileName: fileName, mimeType: mimeType, fileSize: fileSizeBytes, dimensions: dimensions)
+            // Return relative path (just filename, since all images are in same directory)
+            return (filePath: fileName, fileName: fileName, mimeType: mimeType, fileSize: fileSizeBytes, dimensions: dimensions)
+        }.value
     }
 
     /// Load image data from disk
-    func loadImage(filePath: String) throws -> Data {
-        let storageDir = try getImageStorageDirectory()
-        let fileURL = storageDir.appendingPathComponent(filePath)
+    nonisolated func loadImage(filePath: String) async throws -> Data {
+        return try await Task.detached {
+            let storageDir = try self.getImageStorageDirectory()
+            let fileURL = storageDir.appendingPathComponent(filePath)
 
-        do {
-            return try Data(contentsOf: fileURL)
-        } catch {
-            throw ImageStorageError.storageError(error)
-        }
+            do {
+                return try Data(contentsOf: fileURL)
+            } catch {
+                throw ImageStorageError.storageError(error)
+            }
+        }.value
     }
 
     /// Delete image file from disk
-    func deleteImage(filePath: String) throws {
-        let storageDir = try getImageStorageDirectory()
-        let fileURL = storageDir.appendingPathComponent(filePath)
+    nonisolated func deleteImage(filePath: String) async throws {
+        try await Task.detached {
+            let storageDir = try self.getImageStorageDirectory()
+            let fileURL = storageDir.appendingPathComponent(filePath)
 
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: fileURL.path) {
-            try fileManager.removeItem(at: fileURL)
-        }
+            let fileManager = FileManager.default
+            if fileManager.fileExists(atPath: fileURL.path) {
+                try fileManager.removeItem(at: fileURL)
+            }
+        }.value
     }
 
     // MARK: - Helper Methods
 
-    private func getMimeType(from data: Data) -> String {
+    nonisolated private func getMimeType(from data: Data) -> String {
         // Check magic numbers
         guard data.count > 2 else { return "image/jpeg" }
 
@@ -126,7 +132,7 @@ final class ImageStorageService {
         return "image/jpeg" // default
     }
 
-    private func getFileExtension(from mimeType: String) -> String {
+    nonisolated private func getFileExtension(from mimeType: String) -> String {
         switch mimeType {
         case "image/png": return "png"
         case "image/gif": return "gif"

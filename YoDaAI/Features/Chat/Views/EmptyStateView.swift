@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Empty state view shown when no thread is selected
 struct EmptyStateView: View {
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
     var onCreateNewChat: () -> Void
     var onOpenAPIKeysSettings: () -> Void
 

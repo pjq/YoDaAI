@@ -170,6 +170,11 @@ struct GeneralSettingsView: View {
                 Text("Use Cmd++ to increase, Cmd+- to decrease, Cmd+0 to reset")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Toggle("Enable Markdown Rendering", isOn: $llmSettings.enableMarkdown)
+                Text("Render assistant messages with markdown formatting and syntax highlighting")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("About") {

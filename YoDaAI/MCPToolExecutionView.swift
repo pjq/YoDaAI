@@ -2,8 +2,6 @@
 //  MCPToolExecutionView.swift
 //  YoDaAI
 //
-//  Created by Claude Code
-//
 
 import SwiftUI
 
@@ -30,360 +28,289 @@ struct ToolExecutionResult: Identifiable, Equatable {
     }
 }
 
-// MARK: - Tool Execution Card View
+// MARK: - Tool Execution Card View (Perplexity-style)
 
 struct MCPToolExecutionCard: View {
     let state: ToolExecutionState
-    @State private var expandedResults: Set<UUID> = []
+    @State private var isExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            headerView
-
-            switch state {
-            case .preparing(let toolCount):
-                preparingView(toolCount: toolCount)
-            case .executing(let current, let total, let toolName, let query):
-                executingView(current: current, total: total, toolName: toolName, query: query)
-            case .processing:
-                processingView
-            case .completed(let results):
-                completedView(results: results)
-            case .failed(let error):
-                failedView(error: error)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(backgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(borderColor, lineWidth: 1)
-        )
-    }
-
-    // MARK: - Header
-
-    private var headerView: some View {
-        HStack(spacing: 8) {
-            iconView
-
-            Text(titleText)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
-
-            Spacer()
-
-            if case .executing = state {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .frame(width: 16, height: 16)
-            }
-        }
-    }
-
-    private var iconView: some View {
-        Group {
-            switch state {
-            case .preparing:
-                Image(systemName: "clock.fill")
-                    .foregroundColor(.blue)
-            case .executing:
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.blue)
-            case .processing:
-                Image(systemName: "gearshape.2.fill")
-                    .foregroundColor(.orange)
-            case .completed:
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-            case .failed:
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(.red)
-            }
-        }
-        .font(.system(size: 16))
-    }
-
-    private var titleText: String {
         switch state {
-        case .preparing: return "Preparing Tools"
-        case .executing: return "Executing Tool"
-        case .processing: return "Processing Results"
-        case .completed: return "Tool Execution Complete"
-        case .failed: return "Tool Execution Failed"
+        case .preparing(let toolCount):
+            preparingView(toolCount: toolCount)
+        case .executing(let current, let total, let toolName, let query):
+            executingView(current: current, total: total, toolName: toolName, query: query)
+        case .processing:
+            processingView
+        case .completed(let results):
+            completedView(results: results)
+        case .failed(let error):
+            failedView(error: error)
         }
     }
 
-    // MARK: - State Views
+    // MARK: - Preparing
 
     private func preparingView(toolCount: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Preparing to execute \(toolCount) tool\(toolCount == 1 ? "" : "s")...")
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
-
+        HStack(spacing: 8) {
             ProgressView()
-                .progressViewStyle(.linear)
+                .scaleEffect(0.65)
+                .frame(width: 14, height: 14)
+
+            Text("Preparing \(toolCount) tool\(toolCount == 1 ? "" : "s")…")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.07))
+        )
     }
 
-    private func executingView(current: Int, total: Int, toolName: String, query: String?) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Progress bar
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("\(current) of \(total)")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(Int(Double(current) / Double(total) * 100))%")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.blue)
-                }
+    // MARK: - Executing
 
+    private func executingView(current: Int, total: Int, toolName: String, query: String?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .scaleEffect(0.65)
+                    .frame(width: 14, height: 14)
+
+                Text(formatToolName(toolName))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                if total > 1 {
+                    Text("\(current)/\(total)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            if let query = query {
+                Text("\"\(query)\"")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            if total > 1 {
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.secondary.opacity(0.2))
-                            .frame(height: 6)
-
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.blue)
-                            .frame(width: geometry.size.width * (Double(current) / Double(total)), height: 6)
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.15))
+                            .frame(height: 3)
+                        Capsule()
+                            .fill(Color.accentColor.opacity(0.7))
+                            .frame(width: geometry.size.width * (Double(current) / Double(total)), height: 3)
                             .animation(.easeInOut(duration: 0.3), value: current)
                     }
                 }
-                .frame(height: 6)
+                .frame(height: 3)
             }
-
-            // Tool details
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "wrench.and.screwdriver.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.blue)
-
-                    Text(formatToolName(toolName))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.primary)
-                }
-
-                if let query = query {
-                    HStack(spacing: 6) {
-                        Image(systemName: "text.quote")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-
-                        Text(query)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.05))
-            )
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.07))
+        )
     }
+
+    // MARK: - Processing
 
     private var processingView: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             ProgressView()
-                .scaleEffect(0.8)
+                .scaleEffect(0.65)
+                .frame(width: 14, height: 14)
 
-            Text("Processing tool results...")
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
+            Text("Processing results…")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.07))
+        )
     }
+
+    // MARK: - Completed (Perplexity-style collapsible pill)
 
     private func completedView(results: [ToolExecutionResult]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Executed \(results.count) tool\(results.count == 1 ? "" : "s") successfully")
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
-
-            // Results list
-            VStack(spacing: 8) {
-                ForEach(results) { result in
-                    resultRow(result: result)
+        VStack(alignment: .leading, spacing: 0) {
+            // Pill header — always visible
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
                 }
-            }
-        }
-    }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
 
-    private func resultRow(result: ToolExecutionResult) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: {
-                if expandedResults.contains(result.id) {
-                    expandedResults.remove(result.id)
-                } else {
-                    expandedResults.insert(result.id)
-                }
-            }) {
-                HStack(spacing: 8) {
-                    Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(result.success ? .green : .red)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(formatToolName(result.toolName))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.primary)
-
-                        if let query = result.query {
-                            Text(query)
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
+                    Text("Used \(results.count) tool\(results.count == 1 ? "" : "s")")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
 
                     Spacer()
 
-                    Image(systemName: expandedResults.contains(result.id) ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
 
-            if expandedResults.contains(result.id) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Divider()
+            // Expanded tool list
+            if isExpanded {
+                Divider()
+                    .padding(.horizontal, 12)
 
-                    Text("Result Preview:")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-
-                    Text(result.resultPreview)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.primary)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.secondary.opacity(0.1))
-                        )
-
-                    if result.fullResult.count > result.resultPreview.count {
-                        Text("+ \(result.fullResult.count - result.resultPreview.count) more characters")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(results) { result in
+                        toolResultRow(result: result)
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(result.success ? Color.green.opacity(0.05) : Color.red.opacity(0.05))
+                .fill(Color.secondary.opacity(0.07))
         )
-        .animation(.easeInOut(duration: 0.2), value: expandedResults.contains(result.id))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func failedView(error: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tool execution failed")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.red)
+    private func toolResultRow(result: ToolExecutionResult) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: result.success ? "checkmark" : "xmark")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(result.success ? Color.green : Color.red)
+                .frame(width: 14)
 
-            Text(error)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.red.opacity(0.1))
-                )
+            Text(formatToolName(result.toolName))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+
+            if let query = result.query {
+                Text("\"\(query)\"")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         }
+        .padding(.vertical, 3)
+    }
+
+    // MARK: - Failed
+
+    private func failedView(error: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.red)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Tool failed")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.red)
+
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.06))
+        )
     }
 
     // MARK: - Helpers
 
-    private var backgroundColor: Color {
-        switch state {
-        case .preparing, .executing, .processing:
-            return Color.blue.opacity(0.03)
-        case .completed:
-            return Color.green.opacity(0.03)
-        case .failed:
-            return Color.red.opacity(0.03)
-        }
-    }
-
-    private var borderColor: Color {
-        switch state {
-        case .preparing, .executing, .processing:
-            return Color.blue.opacity(0.3)
-        case .completed:
-            return Color.green.opacity(0.3)
-        case .failed:
-            return Color.red.opacity(0.3)
-        }
-    }
-
     private func formatToolName(_ toolName: String) -> String {
-        // Remove prefix like "TailySearch."
+        // Remove server prefix like "TavilySearch."
+        let base: String
         if let dotIndex = toolName.lastIndex(of: ".") {
-            let name = String(toolName[toolName.index(after: dotIndex)...])
-            // Convert snake_case or camelCase to Title Case
-            return name
-                .replacingOccurrences(of: "_", with: " ")
-                .split(separator: " ")
-                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-                .joined(separator: " ")
+            base = String(toolName[toolName.index(after: dotIndex)...])
+        } else {
+            base = toolName
         }
-        return toolName
+        // Convert snake_case to readable name
+        return base
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 }
 
-// MARK: - Preview
+// MARK: - Previews
 
 #Preview("Preparing") {
     MCPToolExecutionCard(state: .preparing(toolCount: 3))
         .padding()
-        .frame(maxWidth: 400)
+        .frame(maxWidth: 380)
 }
 
 #Preview("Executing") {
     MCPToolExecutionCard(state: .executing(
         current: 2,
         total: 3,
-        toolName: "TailySearch.tavily_search",
-        query: "What's happening in 2026 events predictions"
+        toolName: "TavilySearch.tavily_search",
+        query: "What's happening in AI in 2026"
     ))
     .padding()
-    .frame(maxWidth: 400)
+    .frame(maxWidth: 380)
+}
+
+#Preview("Processing") {
+    MCPToolExecutionCard(state: .processing)
+        .padding()
+        .frame(maxWidth: 380)
 }
 
 #Preview("Completed") {
     MCPToolExecutionCard(state: .completed(results: [
         ToolExecutionResult(
-            toolName: "TailySearch.tavily_search",
-            query: "pjq.me website owner",
-            resultPreview: "{\"query\":\"pjq.me\",\"results\":[{\"title\":\"Jianqing's Blog\",\"url\":\"https://pjq.me\"}]}",
-            fullResult: "{\"query\":\"pjq.me website owner\",\"results\":[{\"title\":\"Jianqing's Blog\",\"url\":\"https://pjq.me\",\"content\":\"Personal blog of Peng Jianqing covering tech, AI, and SAP development topics.\"}]}",
+            toolName: "TavilySearch.tavily_search",
+            query: "AI news 2026",
+            resultPreview: "{}",
+            fullResult: "{}",
             success: true
         ),
         ToolExecutionResult(
-            toolName: "TailySearch.tavily_extract",
-            query: nil,
-            resultPreview: "{\"results\":[{\"url\":\"https://pjq.me\",\"title\":\"Jianqing's Blog\"}]}",
-            fullResult: "{\"results\":[{\"url\":\"https://pjq.me\",\"title\":\"Jianqing's Blog\",\"raw_content\":\"Jianqing's Blog - Thoughts and Future\"}]}",
+            toolName: "TavilySearch.tavily_extract",
+            query: "https://pjq.me",
+            resultPreview: "{}",
+            fullResult: "{}",
             success: true
         )
     ]))
     .padding()
-    .frame(maxWidth: 400)
+    .frame(maxWidth: 380)
+}
+
+#Preview("Failed") {
+    MCPToolExecutionCard(state: .failed(error: "Connection timeout after 60s"))
+        .padding()
+        .frame(maxWidth: 380)
 }

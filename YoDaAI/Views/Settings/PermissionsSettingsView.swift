@@ -144,7 +144,7 @@ struct PermissionsSettingsView: View {
                                 }, set: { newValue in
                                     rule.allowContext = newValue
                                     rule.updatedAt = Date()
-                                    try? modelContext.save()
+                                    Task { try? modelContext.save() }
                                 }))
                                 .toggleStyle(.switch)
                                 .labelsHidden()
@@ -159,7 +159,7 @@ struct PermissionsSettingsView: View {
                                 }, set: { newValue in
                                     rule.allowInsert = newValue
                                     rule.updatedAt = Date()
-                                    try? modelContext.save()
+                                    Task { try? modelContext.save() }
                                 }))
                                 .toggleStyle(.switch)
                                 .labelsHidden()

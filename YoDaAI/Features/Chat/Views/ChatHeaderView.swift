@@ -10,7 +10,7 @@ struct ChatHeaderView: View {
     var onDelete: () -> Void
 
     @State private var showDeleteConfirmation = false
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
         HStack {

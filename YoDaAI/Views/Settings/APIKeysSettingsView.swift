@@ -197,7 +197,7 @@ struct APIKeysSettingsView: View {
         selectedProvider.selectedModel = selectedModelID.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         selectedProvider.updatedAt = Date()
 
-        try? modelContext.save()
+        Task { try? modelContext.save() }
     }
 
     private func addProvider() {
@@ -209,7 +209,7 @@ struct APIKeysSettingsView: View {
             isDefault: providers.isEmpty
         )
         modelContext.insert(provider)
-        try? modelContext.save()
+        Task { try? modelContext.save() }
 
         selectedProviderID = provider.id
     }
@@ -222,14 +222,14 @@ struct APIKeysSettingsView: View {
         let deletedID = selectedProvider.id
 
         modelContext.delete(selectedProvider)
-        try? modelContext.save()
+        Task { try? modelContext.save() }
 
         if wasDefault {
             let remaining = providers.filter { $0.id != deletedID }
             if let first = remaining.first {
                 first.isDefault = true
                 first.updatedAt = Date()
-                try? modelContext.save()
+                Task { try? modelContext.save() }
             }
         }
 
@@ -242,7 +242,7 @@ struct APIKeysSettingsView: View {
             provider.isDefault = (provider.id == selectedProvider.id)
             provider.updatedAt = Date()
         }
-        try? modelContext.save()
+        Task { try? modelContext.save() }
     }
 
     private func migrateLegacyProviderIfNeeded() {
@@ -263,7 +263,7 @@ struct APIKeysSettingsView: View {
             isDefault: true
         )
         modelContext.insert(migrated)
-        try? modelContext.save()
+        Task { try? modelContext.save() }
 
         selectedProviderID = migrated.id
     }

@@ -79,7 +79,7 @@ struct MessageImageGridView: View {
     private func loadImages() async {
         for attachment in attachments {
             do {
-                let data = try ImageStorageService.shared.loadImage(filePath: attachment.filePath)
+                let data = try await ImageStorageService.shared.loadImage(filePath: attachment.filePath)
                 if let nsImage = NSImage(data: data) {
                     await MainActor.run {
                         loadedImages[attachment.id] = nsImage

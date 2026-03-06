@@ -7,7 +7,7 @@ struct MentionPickerPopover: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     private var filteredApps: [RunningApp] {
         let apps = viewModel.getRunningApps()
@@ -107,7 +107,7 @@ struct MentionPickerPopover: View {
 struct SlashCommandPickerPopover: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -180,7 +180,7 @@ struct ModelPickerPopover: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     let providers: [LLMProvider]
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     private var filteredProviders: [LLMProvider] {
         providers.filter { !$0.selectedModel.isEmpty }

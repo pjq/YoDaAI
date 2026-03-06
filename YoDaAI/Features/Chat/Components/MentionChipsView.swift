@@ -25,7 +25,7 @@ struct MentionChipView: View {
     @State private var windowTitle: String?
     @State private var isLoading = false
     @State private var hasLoadedOnce = false
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
         HStack(spacing: 4) {

@@ -18,7 +18,7 @@ final class AppPermissionsStore {
         in context: ModelContext,
         defaultAllowContext: Bool = true,
         defaultAllowInsert: Bool = true
-    ) throws -> AppPermissionRule {
+    ) async throws -> AppPermissionRule {
         if let existing = try rule(for: bundleIdentifier, in: context) {
             return existing
         }
@@ -30,7 +30,12 @@ final class AppPermissionsStore {
             allowInsert: defaultAllowInsert
         )
         context.insert(created)
-        try context.save()
+
+        // Save new permission rule (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
+        }
+
         return created
     }
 }

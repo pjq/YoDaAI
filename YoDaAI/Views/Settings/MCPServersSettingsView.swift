@@ -103,7 +103,7 @@ struct MCPServersSettingsView: View {
             toolRegistry.removeClient(for: server.endpoint)
             modelContext.delete(server)
         }
-        try? modelContext.save()
+        Task { try? modelContext.save() }
     }
 }
 
@@ -168,7 +168,7 @@ private struct MCPServerRowView: View {
                     set: { newValue in
                         server.isEnabled = newValue
                         server.updatedAt = Date()
-                        try? modelContext.save()
+                        Task { try? modelContext.save() }
                         
                         if newValue && toolRegistry.isMCPEnabled {
                             // Auto-connect when enabled
@@ -558,7 +558,7 @@ private struct MCPServerDetailSheet: View {
         server.customHeaders = draftCustomHeaders
         server.updatedAt = Date()
         
-        try? modelContext.save()
+        Task { try? modelContext.save() }
         
         // Reconnect if enabled
         if server.isEnabled && toolRegistry.isMCPEnabled {
@@ -569,7 +569,7 @@ private struct MCPServerDetailSheet: View {
     private func deleteServer() {
         toolRegistry.removeClient(for: server.endpoint)
         modelContext.delete(server)
-        try? modelContext.save()
+        Task { try? modelContext.save() }
     }
     
     private func reconnect() {
@@ -777,7 +777,7 @@ private struct MCPServerAddSheet: View {
         server.customHeaders = customHeaders
         
         modelContext.insert(server)
-        try? modelContext.save()
+        Task { try? modelContext.save() }
         
         // Auto-connect if enabled
         if isEnabled && toolRegistry.isMCPEnabled {
