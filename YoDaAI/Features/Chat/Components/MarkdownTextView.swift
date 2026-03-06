@@ -78,7 +78,18 @@ private struct CustomCodeBlockView: View {
                         }
                 }
                 CopyButtonView(isCopied: $isCopied) {
-                    configuration.codeBlock.copyToPasteboard()
+                    if let xml = drawioXML {
+                        // Strip XML declaration header — draw.io app can't parse it
+                        let cleaned = xml.replacingOccurrences(
+                            of: #"<\?xml[^?]*\?>\s*"#,
+                            with: "",
+                            options: .regularExpression
+                        )
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(cleaned, forType: .string)
+                    } else {
+                        configuration.codeBlock.copyToPasteboard()
+                    }
                 }
             }
             .padding(.top, 8)
