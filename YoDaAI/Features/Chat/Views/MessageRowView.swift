@@ -20,6 +20,7 @@ struct MessageRowView: View, Equatable {
     @State private var pressedAction: MessageAction?
     @State private var showCopiedFeedback = false
     @State private var isHovered = false
+    @State private var hoverVersion = 0  // Incremented on each hover-exit to cancel pending hides
 
     // PERFORMANCE FIX: Use Environment instead of @ObservedObject
     @Environment(\.appScaleManager) private var scaleManager
@@ -169,8 +170,17 @@ struct MessageRowView: View, Equatable {
             }
         }
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
+            if hovering {
+                withAnimation(.easeInOut(duration: 0.1)) { isHovered = true }
+            } else {
+                // Increment version to cancel any previous pending hide
+                hoverVersion += 1
+                let capturedVersion = hoverVersion
+                // Delay hiding — gives the cursor time to reach the action buttons
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    guard hoverVersion == capturedVersion else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) { isHovered = false }
+                }
             }
         }
         .alert("Delete Message?", isPresented: $showDeleteConfirmation) {
