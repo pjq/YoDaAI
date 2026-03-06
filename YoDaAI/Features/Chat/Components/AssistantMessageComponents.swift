@@ -30,8 +30,8 @@ struct AssistantMessageContentView: View {
                     }
                 case .drawio(let xml):
                     if llmSettings.enableMarkdown {
-                        // Pass xml so the code block header shows a "View Diagram" button
-                        MarkdownTextView(content: "```xml\n\(xml)\n```", drawioXML: xml)
+                        // Use "drawio" language hint so the header clearly labels it as draw.io
+                        MarkdownTextView(content: "```drawio\n\(xml)\n```", drawioXML: xml)
                     } else {
                         // Plain text mode: just show the button
                         DrawioView(xmlContent: xml)

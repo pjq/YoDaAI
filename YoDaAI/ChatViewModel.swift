@@ -27,22 +27,28 @@ final class LLMSettings: ObservableObject {
     @Published var useSystemPrompt: Bool {
         didSet { UserDefaults.standard.set(useSystemPrompt, forKey: "llm_useSystemPrompt") }
     }
-    
+
+    @Published var enableMarkdown: Bool {
+        didSet { UserDefaults.standard.set(enableMarkdown, forKey: "llm_enableMarkdown") }
+    }
+
     private init() {
         // Load from UserDefaults with defaults
         self.temperature = UserDefaults.standard.object(forKey: "llm_temperature") as? Double ?? 1.0
-        self.maxTokens = UserDefaults.standard.object(forKey: "llm_maxTokens") as? Int ?? 4096
+        self.maxTokens = UserDefaults.standard.object(forKey: "llm_maxTokens") as? Int ?? 0
         self.maxMessageCount = UserDefaults.standard.object(forKey: "llm_maxMessageCount") as? Int ?? 20
         self.systemPrompt = UserDefaults.standard.string(forKey: "llm_systemPrompt") ?? "You are a helpful assistant."
         self.useSystemPrompt = UserDefaults.standard.object(forKey: "llm_useSystemPrompt") as? Bool ?? true
+        self.enableMarkdown = UserDefaults.standard.object(forKey: "llm_enableMarkdown") as? Bool ?? true
     }
     
     func reset() {
         temperature = 1.0
-        maxTokens = 4096
+        maxTokens = 0
         maxMessageCount = 20
         systemPrompt = "You are a helpful assistant."
         useSystemPrompt = true
+        enableMarkdown = true
     }
 }
 
@@ -258,13 +264,19 @@ final class ChatViewModel: ObservableObject {
         if let first = providers.first {
             first.isDefault = true
             first.updatedAt = Date()
-            try context.save()
+            // Save changes (ModelContext must stay on its thread)
+            Task {
+                try? context.save()
+            }
             return first
         }
 
         let created = LLMProvider()
         context.insert(created)
-        try context.save()
+        // Save changes (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
+        }
         return created
     }
 
@@ -285,7 +297,10 @@ final class ChatViewModel: ObservableObject {
 
         let created = ChatThread(title: "New Chat")
         context.insert(created)
-        try context.save()
+        // Save changes (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
+        }
         return created
     }
 
@@ -299,7 +314,9 @@ final class ChatViewModel: ObservableObject {
     
     /// Start sending with Task tracking for cancellation
     func startSending(in context: ModelContext) {
-        currentTask = Task {
+        // CRITICAL FIX: Use Task instead of capturing @MainActor
+        // The send() function is async and will yield appropriately
+        currentTask = Task { @MainActor in
             await send(in: context)
         }
     }
@@ -374,35 +391,50 @@ final class ChatViewModel: ObservableObject {
                 let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread, attachments: [], appContexts: [])
                 context.insert(userMessage)
 
-                // Save images to disk and create attachments
-                // Note: ImageStorageService is @MainActor, but this is relatively fast I/O
-                // The real performance win is moving context.save() off main thread below
-                for pendingImage in imagesToSend {
-                    try Task.checkCancellation()
+                // CRITICAL FIX: Process images completely off main thread
+                // Even though we're in async context, we need explicit detachment from @MainActor
+                let attachments: [ImageAttachment] = try await Task.detached {
+                    try await withThrowingTaskGroup(of: ImageAttachment.self) { group in
+                    for pendingImage in imagesToSend {
+                        group.addTask {
+                            try Task.checkCancellation()
 
-                    let result = try ImageStorageService.shared.saveImage(
-                        data: pendingImage.data,
-                        originalFileName: pendingImage.fileName
-                    )
+                            let result = try await ImageStorageService.shared.saveImage(
+                                data: pendingImage.data,
+                                originalFileName: pendingImage.fileName
+                            )
 
-                    let attachment = ImageAttachment(
-                        fileName: result.fileName,
-                        filePath: result.filePath,
-                        mimeType: result.mimeType,
-                        fileSize: result.fileSize,
-                        width: result.dimensions?.width,
-                        height: result.dimensions?.height,
-                        message: userMessage
-                    )
+                            return ImageAttachment(
+                                fileName: result.fileName,
+                                filePath: result.filePath,
+                                mimeType: result.mimeType,
+                                fileSize: result.fileSize,
+                                width: result.dimensions?.width,
+                                height: result.dimensions?.height,
+                                message: userMessage
+                            )
+                        }
+                    }
+
+                        var results: [ImageAttachment] = []
+                        for try await attachment in group {
+                            results.append(attachment)
+                        }
+                        return results
+                    }
+                }.value
+
+                // Insert all attachments into context (back on main thread)
+                for attachment in attachments {
                     context.insert(attachment)
                 }
             }
 
-            // PERFORMANCE FIX: Save context on background thread to avoid blocking UI
-            // Note: We don't wait for save to complete to keep UI responsive
-            Task.detached {
+            // IMMEDIATE UI FIX: Save user messages synchronously so they appear immediately
+            // This ensures the UI shows user messages right after clicking send
+            try await Task.detached {
                 try context.save()
-            }
+            }.value
 
             // STEP 3: Generate AI response (no need to pass mentions - they're now in message history)
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], cachedContexts: [:], in: context)
@@ -411,9 +443,9 @@ final class ChatViewModel: ObservableObject {
             if thread.title == "New Chat" {
                 let titleText = !trimmed.isEmpty ? trimmed : "Image conversation"
                 thread.title = generateThreadTitle(from: titleText)
-                // PERFORMANCE FIX: Save on background thread (fire and forget)
-                Task.detached {
-                    try context.save()
+                // Save thread title update (ModelContext must stay on its thread)
+                Task {
+                    try? context.save()
                 }
             }
         } catch is CancellationError {
@@ -445,7 +477,10 @@ final class ChatViewModel: ObservableObject {
             let sortedMessages = thread.messages.sorted { $0.createdAt < $1.createdAt }
             if let lastAssistant = sortedMessages.last(where: { $0.role == .assistant }) {
                 context.delete(lastAssistant)
-                try context.save()
+                // Save deletion (ModelContext must stay on its thread)
+                Task {
+                    try? context.save()
+                }
             }
             
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
@@ -488,8 +523,13 @@ final class ChatViewModel: ObservableObject {
                     }
                 }
             }
-            try context.save()
-            
+
+            // Save changes after deleting messages
+            // Note: ModelContext must stay on its thread (main), use Task not Task.detached
+            Task {
+                try? context.save()
+            }
+
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], in: context)
         } catch is CancellationError {
             print("[ChatViewModel] Retry from message cancelled by user")
@@ -501,21 +541,18 @@ final class ChatViewModel: ObservableObject {
     /// Delete a specific message
     func deleteMessage(_ message: ChatMessage, in context: ModelContext) {
         context.delete(message)
-        try? context.save()
+        // PERFORMANCE FIX: Save on background thread
+        Task {
+            try? context.save()
+        }
     }
     
     private func sendAssistantResponse(for thread: ChatThread, provider: LLMProvider, mentionedApps: [RunningApp] = [], cachedContexts: [String: AppContextSnapshot] = [:], in context: ModelContext) async throws {
         let settings = LLMSettings.shared
 
-        // Fetch messages with relationships loaded to avoid SwiftData faults
-        // Use thread.messages but force evaluation to ensure attachments are loaded
+        // PERFORMANCE FIX: Get messages directly from relationship (already in memory)
+        // Since MessageListView now uses thread.messages, they should already be loaded
         let history = thread.messages.sorted(by: { $0.createdAt < $1.createdAt })
-
-        // Force-load attachments relationship by accessing it in a safe way
-        for message in history {
-            // This forces SwiftData to load the relationship if not already loaded
-            _ = message.attachments.count
-        }
 
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
@@ -571,7 +608,7 @@ final class ChatViewModel: ObservableObject {
             }
 
             if let snapshot = snapshot {
-                let rule = try permissionsStore.ensureRule(
+                let rule = try await permissionsStore.ensureRule(
                     for: snapshot.bundleIdentifier,
                     displayName: snapshot.appName,
                     in: context
@@ -606,7 +643,7 @@ final class ChatViewModel: ObservableObject {
                 let alreadyMentioned = mentionedApps.contains { $0.bundleIdentifier == snapshot.bundleIdentifier }
 
                 if !alreadyMentioned {
-                    let rule = try permissionsStore.ensureRule(
+                    let rule = try await permissionsStore.ensureRule(
                         for: snapshot.bundleIdentifier,
                         displayName: snapshot.appName,
                         in: context
@@ -644,17 +681,28 @@ final class ChatViewModel: ObservableObject {
                     contentParts.append(.text(msg.content))
                 }
 
-                // Add image parts
-                for attachment in msg.attachments {
-                    do {
-                        let imageData = try ImageStorageService.shared.loadImage(filePath: attachment.filePath)
-                        let dataURL = OpenAICompatibleClient.encodeImageToDataURL(
-                            data: imageData,
-                            mimeType: attachment.mimeType
-                        )
-                        contentParts.append(.imageUrl(url: dataURL, detail: "auto"))
-                    } catch {
-                        print("Failed to load attachment \(attachment.fileName): \(error)")
+                // Add image parts - load in parallel for better performance
+                await withTaskGroup(of: OpenAIChatMessageContent?.self) { group in
+                    for attachment in msg.attachments {
+                        group.addTask {
+                            do {
+                                let imageData = try await ImageStorageService.shared.loadImage(filePath: attachment.filePath)
+                                let dataURL = OpenAICompatibleClient.encodeImageToDataURL(
+                                    data: imageData,
+                                    mimeType: attachment.mimeType
+                                )
+                                return .imageUrl(url: dataURL, detail: "auto")
+                            } catch {
+                                print("Failed to load attachment \(attachment.fileName): \(error)")
+                                return nil
+                            }
+                        }
+                    }
+
+                    for await imagePart in group {
+                        if let imagePart = imagePart {
+                            contentParts.append(imagePart)
+                        }
                     }
                 }
 
@@ -672,9 +720,9 @@ final class ChatViewModel: ObservableObject {
         // Create empty assistant message for streaming
         let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread, attachments: [], appContexts: [])
         context.insert(assistantMessage)
-        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        Task.detached {
-            try context.save()
+        // Save assistant message (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
         }
 
         // Track the streaming message
@@ -702,6 +750,11 @@ final class ChatViewModel: ObservableObject {
         var fullResponseWithToolCalls = ""
         var chunkCount = 0  // Track chunk count for batched saves
 
+        // PERFORMANCE FIX: Batch streaming updates to reduce UI re-renders
+        var streamBuffer = ""
+        var lastStreamUpdate = Date()
+        let streamBatchInterval: TimeInterval = 0.05  // 50ms batching
+
         for try await chunk in stream {
             // Check for cancellation BEFORE updating UI
             try Task.checkCancellation()
@@ -716,9 +769,9 @@ final class ChatViewModel: ObservableObject {
                     if let toolCallRange = combined.range(of: "<tool_call>") {
                         let contentBeforeToolCall = String(combined[..<toolCallRange.lowerBound])
                         assistantMessage.content = contentBeforeToolCall
-                        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-                        Task.detached {
-                            try context.save()
+                        // Save partial message (ModelContext must stay on its thread)
+                        Task {
+                            try? context.save()
                         }
                         // Save the full combined string (includes start of tool call)
                         fullResponseWithToolCalls = combined
@@ -732,21 +785,36 @@ final class ChatViewModel: ObservableObject {
             if detectedToolCallDuringStream {
                 fullResponseWithToolCalls += chunk
             } else {
-                // Normal streaming to UI
-                // PERFORMANCE FIX: Don't save on every chunk - just update in-memory
-                // SwiftData's @Observable will automatically trigger UI updates
-                assistantMessage.content += chunk
+                // Normal streaming to UI - batch updates for performance
+                streamBuffer += chunk
                 chunkCount += 1
+
+                // Batch updates: Update every 50ms OR every 500 characters
+                let shouldFlush = Date().timeIntervalSince(lastStreamUpdate) > streamBatchInterval
+                    || streamBuffer.count > 500
+
+                if shouldFlush {
+                    // PERFORMANCE FIX: Batch UI updates to reduce re-renders
+                    assistantMessage.content += streamBuffer
+                    streamBuffer = ""
+                    lastStreamUpdate = Date()
+                }
 
                 // NO intermediate saves during streaming - they block the UI!
                 // We'll save once at the end after all chunks are received
             }
         }
 
+        // Flush any remaining buffered content
+        if !streamBuffer.isEmpty {
+            assistantMessage.content += streamBuffer
+            streamBuffer = ""
+        }
+
         // Final save after streaming completes
-        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        Task.detached {
-            try context.save()
+        // Save assistant message (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
         }
 
         // If we detected tool calls during streaming, execute them
@@ -773,9 +841,9 @@ final class ChatViewModel: ObservableObject {
             )
         } else {
             // No tool calls detected, just save the complete message
-            // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-            Task.detached {
-                try context.save()
+            // Save final message (ModelContext must stay on its thread)
+            Task {
+                try? context.save()
             }
         }
 
@@ -891,9 +959,9 @@ final class ChatViewModel: ObservableObject {
         toolExecutionState = .processing
 
         // Save once after all tools are executed
-        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        Task.detached {
-            try context.save()
+        // Save assistant message (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
         }
 
         // Check for cancellation before follow-up
@@ -975,9 +1043,9 @@ final class ChatViewModel: ObservableObject {
         streamingMessageID = nil
 
         // Final save to persist all changes
-        // PERFORMANCE FIX: Save on background thread to avoid blocking UI
-        Task.detached {
-            try context.save()
+        // Save assistant message (ModelContext must stay on its thread)
+        Task {
+            try? context.save()
         }
 
         // Update tool execution state to completed with results
@@ -993,15 +1061,7 @@ final class ChatViewModel: ObservableObject {
             )
         }
         toolExecutionState = .completed(results: executionResults)
-
-        // Clear state after a delay
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-            if toolExecutionMessageID == assistantMessage.id {
-                toolExecutionState = nil
-                toolExecutionMessageID = nil
-            }
-        }
+        // State persists — the MCPToolExecutionCard stays collapsed in message history
 
         // Note: Recursive tool calling disabled to prevent infinite loops
         // The LLM should include all necessary tool calls in a single response
@@ -1151,12 +1211,14 @@ final class ChatViewModel: ObservableObject {
         guard let latest = try? latestAssistantMessage(in: context) else { return }
 
         if let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true) {
-            if let rule = try? permissionsStore.ensureRule(
-                for: snapshot.bundleIdentifier,
-                displayName: snapshot.appName,
-                in: context
-            ), rule.allowInsert {
-                _ = accessibilityService.insertTextIntoFocusedElement(latest, promptIfNeeded: true)
+            Task {
+                if let rule = try? await permissionsStore.ensureRule(
+                    for: snapshot.bundleIdentifier,
+                    displayName: snapshot.appName,
+                    in: context
+                ), rule.allowInsert {
+                    _ = accessibilityService.insertTextIntoFocusedElement(latest, promptIfNeeded: true)
+                }
             }
             return
         }

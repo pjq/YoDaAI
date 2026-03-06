@@ -13,6 +13,9 @@ enum ContentSegment {
 /// Parses assistant message content into text and draw.io diagram segments.
 /// Detects ```drawio fenced code blocks (and ```xml blocks containing mxGraph XML).
 func parseDrawioSegments(_ content: String) -> [ContentSegment] {
+    // Normalize line endings — streaming responses may contain \r\n
+    let content = content.replacingOccurrences(of: "\r\n", with: "\n")
+
     // Pattern matches ```drawio ... ``` or ```xml ... ``` (where content looks like mxGraph)
     let pattern = #"```(?:drawio|xml)\n([\s\S]*?)\n?```"#
     guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
@@ -47,9 +50,10 @@ func parseDrawioSegments(_ content: String) -> [ContentSegment] {
         // The code block content
         if captureRange.location != NSNotFound, let swiftRange = Range(captureRange, in: content) {
             let xml = String(content[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            // Must look like XML (starts with <) to be treated as a diagram
-            let looksLikeXML = xml.hasPrefix("<")
-            let isDrawioBlock = looksLikeXML && (isDrawioXML(xml) || isExplicitDrawioFence(match, in: content))
+            let explicitDrawio = isExplicitDrawioFence(match, in: content)
+            // For explicit ```drawio fences, always treat as diagram.
+            // For ```xml fences, require content to look like mxGraph XML.
+            let isDrawioBlock = explicitDrawio || isDrawioXML(xml)
             if isDrawioBlock {
                 segments.append(.drawio(xml: xml))
             } else {
@@ -78,7 +82,13 @@ func parseDrawioSegments(_ content: String) -> [ContentSegment] {
 
 private func isDrawioXML(_ xml: String) -> Bool {
     let lowered = xml.lowercased()
-    return lowered.contains("<mxfile") || lowered.contains("<mxgraphmodel")
+    // Primary markers: mxGraph root elements (plain or HTML-entity-encoded)
+    if lowered.contains("<mxfile") || lowered.contains("&lt;mxfile") { return true }
+    if lowered.contains("<mxgraphmodel") || lowered.contains("&lt;mxgraphmodel") { return true }
+    // Secondary markers: common mxGraph child elements
+    if lowered.contains("<mxcell") || lowered.contains("&lt;mxcell") { return true }
+    if lowered.contains("<mxgeometry") || lowered.contains("&lt;mxgeometry") { return true }
+    return false
 }
 
 private func isExplicitDrawioFence(_ match: NSTextCheckingResult, in content: String) -> Bool {

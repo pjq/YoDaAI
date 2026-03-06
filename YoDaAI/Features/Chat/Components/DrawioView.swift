@@ -35,36 +35,72 @@ struct DrawioDiagramSheet: View {
     let xmlContent: String
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = true
+    @State private var webViewRef: WKWebView? = nil
+    @State private var copyFeedback = false
 
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar
-            HStack {
+            HStack(spacing: 4) {
                 Text("Diagram")
                     .font(.headline)
+
                 Spacer()
-                Button(action: openInDrawio) {
-                    Label("Open in draw.io", systemImage: "arrow.up.right.square")
-                        .font(.system(size: 13))
+
+                // Zoom controls
+                HStack(spacing: 2) {
+                    toolbarButton(systemImage: "minus.magnifyingglass", help: "Zoom Out") {
+                        webViewRef?.evaluateJavaScript("graph.zoomOut();", completionHandler: nil)
+                    }
+                    toolbarButton(systemImage: "arrow.up.left.and.arrow.down.right", help: "Fit to Window") {
+                        webViewRef?.evaluateJavaScript("graph.fit(); graph.center(true, true);", completionHandler: nil)
+                    }
+                    toolbarButton(systemImage: "plus.magnifyingglass", help: "Zoom In") {
+                        webViewRef?.evaluateJavaScript("graph.zoomIn();", completionHandler: nil)
+                    }
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 4)
+
+                // Copy as image
+                toolbarButton(
+                    systemImage: copyFeedback ? "checkmark" : "photo.on.rectangle",
+                    help: "Copy as Image",
+                    tint: copyFeedback ? .green : nil
+                ) {
+                    copyAsImage()
+                }
+
+                // Open in draw.io
+                toolbarButton(systemImage: "arrow.up.right.square", help: "Open in draw.io") {
+                    openInDrawio()
+                }
+
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 4)
+
+                // Close
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Close")
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             .background(Color(nsColor: .windowBackgroundColor))
 
             Divider()
 
             // WebView
             ZStack {
-                DrawioWebView(xmlContent: xmlContent, isLoading: $isLoading)
+                DrawioWebView(xmlContent: xmlContent, isLoading: $isLoading, webViewRef: $webViewRef)
                 if isLoading {
                     ProgressView("Rendering…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -75,11 +111,52 @@ struct DrawioDiagramSheet: View {
         .frame(minWidth: 700, minHeight: 500)
     }
 
+    // MARK: - Actions
+
     private func openInDrawio() {
         let encoded = xmlContent.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         if let url = URL(string: "https://app.diagrams.net/?src=about#xml=\(encoded)") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func copyAsImage() {
+        guard let webView = webViewRef else { return }
+        let config = WKSnapshotConfiguration()
+        webView.takeSnapshot(with: config) { image, error in
+            guard let image else {
+                print("[DrawioView] Snapshot error: \(error?.localizedDescription ?? "unknown")")
+                return
+            }
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([image])
+                withAnimation(.easeInOut(duration: 0.15)) { copyFeedback = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.2)) { copyFeedback = false }
+                }
+            }
+        }
+    }
+
+    // MARK: - Toolbar button helper
+
+    @ViewBuilder
+    private func toolbarButton(
+        systemImage: String,
+        help: String,
+        tint: Color? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14))
+                .frame(width: 28, height: 28)
+                .foregroundStyle(tint ?? Color.secondary)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 
@@ -88,6 +165,7 @@ struct DrawioDiagramSheet: View {
 private struct DrawioWebView: NSViewRepresentable {
     let xmlContent: String
     @Binding var isLoading: Bool
+    @Binding var webViewRef: WKWebView?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(isLoading: $isLoading)
@@ -101,6 +179,11 @@ private struct DrawioWebView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.loadHTMLString(buildHTML(for: xmlContent), baseURL: nil)
+
+        // Expose the webView reference to the sheet toolbar
+        DispatchQueue.main.async {
+            webViewRef = webView
+        }
         return webView
     }
 
@@ -159,22 +242,21 @@ private struct DrawioWebView: NSViewRepresentable {
               var xml = \(jsonXML);
               var container = document.getElementById('graph');
 
-              var graph = new mxGraph(container);
-              graph.setEnabled(false);
-              graph.setTooltips(false);
-              graph.setCellsMovable(false);
-              graph.setCellsResizable(false);
-              graph.setCellsEditable(false);
-              graph.setCellsSelectable(false);
-              graph.setConnectable(false);
-              graph.setBorder(20);
+              // Expose graph globally so toolbar buttons can call graph.zoomIn() etc.
+              window.graph = new mxGraph(container);
+              window.graph.setEnabled(false);
+              window.graph.setTooltips(false);
+              window.graph.setCellsMovable(false);
+              window.graph.setCellsResizable(false);
+              window.graph.setCellsEditable(false);
+              window.graph.setCellsSelectable(false);
+              window.graph.setConnectable(false);
+              window.graph.setBorder(20);
 
-              // Resolve mxGraphModel node
               function modelNode(xmlStr) {
                 var doc = mxUtils.parseXml(xmlStr);
                 var root = doc.documentElement;
                 if (root.nodeName === 'mxGraphModel') return root;
-                // <mxfile> wrapper
                 var m = root.getElementsByTagName('mxGraphModel');
                 if (m.length > 0) return m[0];
                 return root;
@@ -184,13 +266,12 @@ private struct DrawioWebView: NSViewRepresentable {
               window.webkit.messageHandlers.log.postMessage('node: ' + node.nodeName + ' children: ' + node.childNodes.length);
 
               var codec = new mxCodec(node.ownerDocument);
-              codec.decode(node, graph.getModel());
+              codec.decode(node, window.graph.getModel());
 
-              // Fit after layout
               setTimeout(function() {
-                graph.fit();
-                graph.center(true, true);
-                var b = graph.getGraphBounds();
+                window.graph.fit();
+                window.graph.center(true, true);
+                var b = window.graph.getGraphBounds();
                 window.webkit.messageHandlers.log.postMessage('bounds w=' + b.width + ' h=' + b.height);
                 window.webkit.messageHandlers.ready.postMessage('ok');
               }, 200);
@@ -219,7 +300,6 @@ private struct DrawioWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Fallback: hide spinner after 2s even if ready message didn't fire
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 self.isLoading = false
             }

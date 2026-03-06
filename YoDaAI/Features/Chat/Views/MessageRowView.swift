@@ -2,8 +2,12 @@ import SwiftUI
 import AppKit
 
 /// Individual message row displaying user or assistant messages
-struct MessageRowView: View {
+struct MessageRowView: View, Equatable {
     let message: ChatMessage
+    // PERFORMANCE: Pre-fetched relationship data to avoid lazy loading during render
+    let hasAttachments: Bool
+    let hasAppContexts: Bool
+    let firstAppContext: AppContextAttachment?
     // PERFORMANCE: Only pass the specific properties needed, not entire viewModel
     let toolExecutionState: ToolExecutionState?
     let toolExecutionMessageID: UUID?
@@ -15,14 +19,27 @@ struct MessageRowView: View {
     @State private var showDeleteConfirmation = false
     @State private var pressedAction: MessageAction?
     @State private var showCopiedFeedback = false
+    @State private var isHovered = false
 
-
-    @ObservedObject private var scaleManager = AppScaleManager.shared
+    // PERFORMANCE FIX: Use Environment instead of @ObservedObject
+    @Environment(\.appScaleManager) private var scaleManager
 
     private enum MessageAction {
         case copy
         case retry
         case delete
+    }
+
+    // PERFORMANCE FIX: Implement Equatable to prevent re-renders of non-streaming messages
+    static func == (lhs: MessageRowView, rhs: MessageRowView) -> Bool {
+        // Compare pre-fetched data instead of accessing relationships
+        lhs.message.id == rhs.message.id &&
+        lhs.message.content == rhs.message.content &&
+        lhs.hasAttachments == rhs.hasAttachments &&
+        lhs.hasAppContexts == rhs.hasAppContexts &&
+        lhs.streamingMessageID == rhs.streamingMessageID &&
+        lhs.toolExecutionMessageID == rhs.toolExecutionMessageID &&
+        lhs.isSending == rhs.isSending
     }
 
     var body: some View {
@@ -33,17 +50,17 @@ struct MessageRowView: View {
             }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
-                // Show attached images
-                if !message.attachments.isEmpty {
+                // Show attached images - use pre-fetched data to avoid lazy loading
+                if hasAttachments {
                     MessageImageGridView(attachments: message.attachments, alignment: message.role == .user ? .trailing : .leading)
                 }
 
                 if message.role == .user {
-                    // Check if this is an @ mention context message
-                    let isContextMessage = !message.appContexts.isEmpty
+                    // Check if this is an @ mention context message - use pre-fetched data
+                    let isContextMessage = hasAppContexts
 
                     if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        if isContextMessage, let appContext = message.appContexts.first {
+                        if isContextMessage, let appContext = firstAppContext {
                             // @ Mention context card - styled differently
                             HStack(alignment: .top, spacing: 10) {
                                 AppIconView(bundleIdentifier: appContext.bundleIdentifier)
@@ -98,7 +115,7 @@ struct MessageRowView: View {
                 }
 
                 let isStreamingAssistantMessage = (message.role == .assistant && streamingMessageID == message.id)
-                if !isStreamingAssistantMessage {
+                if !isStreamingAssistantMessage && isHovered {
                     HStack(spacing: 8) {
                         actionButton(
                             action: .copy,
@@ -146,6 +163,11 @@ struct MessageRowView: View {
             // Add spacer on right for assistant messages only
             if message.role != .user {
                 Spacer(minLength: 60)
+            }
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
             }
         }
         .alert("Delete Message?", isPresented: $showDeleteConfirmation) {

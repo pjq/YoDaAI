@@ -121,6 +121,14 @@ struct OpenAIChatCompletionsResponse: Codable {
     let choices: [Choice]
 }
 
+/// Error response that some providers return as an SSE data line instead of an HTTP error status.
+private struct OpenAIStreamErrorResponse: Decodable {
+    struct APIError: Decodable {
+        let message: String
+    }
+    let error: APIError
+}
+
 // Streaming response structure
 struct OpenAIChatCompletionsStreamResponse: Codable {
     struct Choice: Codable {
@@ -342,12 +350,20 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                                 yieldCount += 1
                                 continuation.yield(content)
                             }
-                        } catch {
-                            // Skip malformed chunks but continue streaming
-                            if lineCount <= 5 {
-                                print("[OpenAIStream] Decode error on line \(lineCount): \(error)")
-                                print("[OpenAIStream] JSON was: \(jsonString.prefix(200))")
+                            // Warn if the model stopped due to token limit
+                            if let reason = chunk.choices.first?.finishReason, reason == "length" {
+                                print("[OpenAIStream] WARNING: finish_reason=length — response was cut off by max_tokens limit")
+                                continuation.yield("\n\n⚠️ *Response truncated — max token limit reached. Increase Max Tokens in Settings.*")
                             }
+                        } catch {
+                            // Check if the provider sent an error object as an SSE line (e.g. 400 wrapped in 200)
+                            if let errResp = try? JSONDecoder().decode(OpenAIStreamErrorResponse.self, from: jsonData) {
+                                print("[OpenAIStream] Server error in stream: \(errResp.error.message)")
+                                throw OpenAICompatibleError.streamingError(errResp.error.message)
+                            }
+                            // Skip other malformed chunks and continue streaming
+                            print("[OpenAIStream] Decode error on line \(lineCount): \(error)")
+                            print("[OpenAIStream] JSON was: \(jsonString.prefix(200))")
                             continue
                         }
                     }
