@@ -1002,50 +1002,56 @@ final class ChatViewModel: ObservableObject {
             maxTokens: settings.maxTokens > 0 ? settings.maxTokens : nil
         )
 
-        // Reset message content to base + prepare for streaming the result-based response
-        assistantMessage.content = baseContent + "\n\n"
+        // Reset message content to base — strip the "🔧 Executing tools..." indicator
+        assistantMessage.content = baseContent
 
         print("[MCP] Starting to stream follow-up response based on tool results...")
+        // Re-signal streaming: set nil then re-assign so onChange(of: streamingMessageID) fires
+        // in MessageListView, which re-starts the smooth scroll timer for the follow-up stream.
+        streamingMessageID = nil
         streamingMessageID = assistantMessage.id
 
         var chunkCount = 0
         var totalContent = ""
         var streamError: Error? = nil
 
+        var streamBuffer = ""
+        var lastStreamUpdate = Date()
+        let streamBatchInterval: TimeInterval = 0.05
+
         do {
             for try await chunk in stream {
                 try Task.checkCancellation()
-                // PERFORMANCE FIX: Just update content, no intermediate saves
-                assistantMessage.content += chunk
+                streamBuffer += chunk
                 totalContent += chunk
                 chunkCount += 1
 
-                // NO intermediate saves - they block the UI!
+                let shouldFlush = Date().timeIntervalSince(lastStreamUpdate) > streamBatchInterval
+                    || streamBuffer.count > 500
+                if shouldFlush {
+                    assistantMessage.content += streamBuffer
+                    streamBuffer = ""
+                    lastStreamUpdate = Date()
+                }
             }
         } catch {
             streamError = error
             print("[MCP] ERROR during streaming: \(error)")
-            print("[MCP] Error details: \(error.localizedDescription)")
+        }
+
+        // Flush remaining buffer
+        if !streamBuffer.isEmpty {
+            assistantMessage.content += streamBuffer
         }
 
         print("[MCP] Follow-up streaming complete. Received \(chunkCount) chunks, total length: \(totalContent.count)")
         if chunkCount == 0 {
-            print("[MCP] ERROR: No chunks received from follow-up stream!")
-            print("[MCP] Provider: \(provider.selectedModel), Messages: \(updatedMessages.count)")
             if let error = streamError {
-                print("[MCP] Stream error: \(error)")
-                // Show error to user
                 assistantMessage.content = baseContent + "\n\n⚠️ Error: Failed to get response after tool execution. \(error.localizedDescription)"
             } else {
-                print("[MCP] No error thrown - stream just returned empty")
-                // Show message to user
                 assistantMessage.content = baseContent + "\n\n⚠️ No response received from API after tool execution."
             }
-        } else {
-            print("[MCP] First 200 chars of response: \(totalContent.prefix(200))")
         }
-
-        streamingMessageID = nil
 
         // Final save to persist all changes
         // Save assistant message (ModelContext must stay on its thread)
