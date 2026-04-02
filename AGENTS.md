@@ -55,13 +55,22 @@ YoDaAI/
 │   │   │       └── ThreadRowView.swift
 │   │   └── Settings/          # (in Views/ directory)
 │   │       ├── APIKeysSettingsView.swift
+│   │       ├── AppearanceSettingsView.swift
+│   │       ├── CachedAppsViews.swift
 │   │       ├── GeneralSettingsView.swift
 │   │       ├── MCPServersSettingsView.swift
+│   │       ├── MCPSharedComponents.swift
 │   │       └── PermissionsSettingsView.swift
+│   │
+│   ├── Views/Components/               # Shared UI components
+│   │   └── StatusBadge.swift
 │   │
 │   ├── OpenAICompatibleClient.swift  # API client for LLM providers
 │   ├── AccessibilityService.swift    # macOS accessibility integration
 │   ├── AppPermissionsStore.swift     # Per-app permission management
+│   ├── LLMSettings.swift            # App settings (UserDefaults-backed singleton)
+│   ├── UpdateChecker.swift          # GitHub release update checker
+│   ├── MCPToolRegistry.swift        # MCP tool discovery and execution
 │   ├── Item.swift             # ChatThread, ChatMessage models
 │   ├── LLMProvider.swift      # LLM provider model
 │   ├── AppPermissionRule.swift       # Per-app permission model
@@ -99,6 +108,9 @@ YoDaAI/
 | `AccessibilityService.swift` | `AccessibilityService` | Capture app context, insert text |
 | `AppPermissionsStore.swift` | `AppPermissionsStore` | Manage per-app permission rules |
 | `ChatViewModel.swift` | `ChatViewModel` | Main chat logic, coordinates sending messages |
+| `LLMSettings.swift` | `LLMSettings` | App-wide settings (temperature, system prompt, appearance) persisted via UserDefaults |
+| `UpdateChecker.swift` | `UpdateChecker` | GitHub Releases API update checker with semantic version comparison |
+| `MCPToolRegistry.swift` | `MCPToolRegistry` | MCP tool discovery, caching, and execution |
 
 ### UI Components (Feature-based Architecture)
 
@@ -125,10 +137,15 @@ YoDaAI/
 | **Sidebar** | `Features/Sidebar/Views/` | |
 | `ThreadRowView` | Views | Sidebar thread list item |
 | **Settings** | `Views/Settings/` | |
-| `GeneralSettingsView` | Settings | General settings (app context toggle) |
+| `GeneralSettingsView` | Settings | General settings, LLM params, floating panel, update checker |
+| `AppearanceSettingsView` | Settings | Theme (light/dark/system), text scale, markdown toggle |
 | `APIKeysSettingsView` | Settings | Provider management |
 | `PermissionsSettingsView` | Settings | Per-app permissions |
 | `MCPServersSettingsView` | Settings | MCP server configuration |
+| `MCPSharedComponents` | Settings | Shared MCP UI components (status indicators, headers editor, connection tester) |
+| `CachedAppsViews` | Settings | Cached app detail views (extracted from GeneralSettingsView) |
+| **Shared Components** | `Views/Components/` | |
+| `StatusBadge` | Components | Reusable capsule-shaped pill badge |
 
 ## Build Commands
 
@@ -233,7 +250,7 @@ The automated release workflow:
    - Get current version from git tags
    - Determine new version (bump or custom)
    - Generate changelog from commits since last tag
-   - Update version in `YoDaAI/Info.plist`
+   - Update `YoDaAI/Info.plist`: version, build number, commit hash, build date
    - Commit version bump
 
 3. **Build artifacts**:
@@ -535,9 +552,9 @@ The UI follows the "Alter" app design (see `docs/refer/` screenshots):
 
 ### Adding a New Settings Tab
 
-1. Add case to `SettingsTab` enum in `ContentView.swift`
-2. Create new tab view struct (e.g., `NewSettingsTab`)
-3. Add to switch statement in `SettingsView.body`
+1. Add case to `SettingsTab` enum in `SettingsRouter.swift`
+2. Create new tab view struct in `Views/Settings/`
+3. Add tab button in `SettingsTabBar` and switch case in `AppSettingsView` (both in `YoDaAIApp.swift`)
 
 ### Adding API Endpoints
 
@@ -556,6 +573,7 @@ The UI follows the "Alter" app design (see `docs/refer/` screenshots):
    - Always move database operations off main thread using `Task.detached`
    - Keep image operations on main thread if using `@MainActor` services like `ImageStorageService`
    - Monitor main thread blocking with Instruments if experiencing UI freezes
+7. **Info.plist Versioning**: The main target uses `GENERATE_INFOPLIST_FILE = NO` with a physical `YoDaAI/Info.plist`. Version, build number, commit hash, and build date are stamped by `release.sh`. The pbxproj `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` are stale defaults — do not rely on them.
 
 ## Testing
 
