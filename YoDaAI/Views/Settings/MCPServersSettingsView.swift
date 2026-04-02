@@ -11,7 +11,7 @@ import SwiftData
 struct MCPServersSettingsView: View {
     @Environment(\.modelContext) private var modelContext
 
-    @Query(sort: [SortDescriptor(\MCPServer.updatedAt, order: .reverse)])
+    @Query(sort: [SortDescriptor(\MCPServer.name)])
     private var servers: [MCPServer]
 
     @ObservedObject private var toolRegistry = MCPToolRegistry.shared
@@ -154,7 +154,6 @@ private struct MCPServerRowView: View {
                     get: { server.isEnabled },
                     set: { newValue in
                         server.isEnabled = newValue
-                        server.updatedAt = Date()
                         Task { try? modelContext.save() }
 
                         if newValue && toolRegistry.isMCPEnabled {
