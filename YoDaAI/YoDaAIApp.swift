@@ -152,7 +152,7 @@ struct YoDaAIApp: App {
             }
         }
 
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, url: storeURL)
+        let modelConfiguration = ModelConfiguration(url: storeURL)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])

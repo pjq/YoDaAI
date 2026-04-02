@@ -195,15 +195,17 @@ actor MCPClientWrapper {
             // Convert content to our format
             let resultContent = content.map { item -> MCPToolResultContent in
                 switch item {
-                case .text(let text):
+                case .text(let text, _, _):
                     return MCPToolResultContent(type: "text", text: text, mimeType: nil, data: nil)
-                case .image(let imageData, let mimeType, _):
+                case .image(let imageData, let mimeType, _, _):
                     // imageData is already a String (base64 encoded) in the SDK
                     return MCPToolResultContent(type: "image", text: nil, mimeType: mimeType, data: imageData)
-                case .audio(let audioData, let mimeType):
+                case .audio(let audioData, let mimeType, _, _):
                     return MCPToolResultContent(type: "audio", text: nil, mimeType: mimeType, data: audioData)
-                case .resource(let uri, let mimeType, let text):
-                    return MCPToolResultContent(type: "resource", text: text ?? uri, mimeType: mimeType, data: nil)
+                case .resource(let resource, _, _):
+                    return MCPToolResultContent(type: "resource", text: resource.text ?? resource.uri, mimeType: resource.mimeType, data: nil)
+                case .resourceLink(let uri, _, _, _, let mimeType, _):
+                    return MCPToolResultContent(type: "resource", text: uri, mimeType: mimeType, data: nil)
                 }
             }
             
