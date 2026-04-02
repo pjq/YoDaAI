@@ -12,9 +12,13 @@ A native macOS chat application that connects to OpenAI-compatible LLM providers
 - **Multiple LLM providers** - Connect to OpenAI, Ollama, LM Studio, or any OpenAI-compatible API
 - **Auto-fetch models** from provider's `/v1/models` endpoint
 - **Streaming responses** - See AI responses in real-time
-- **Markdown rendering** with syntax-highlighted code blocks and copy button
+- **Markdown rendering** with syntax-highlighted code blocks and copy button (Textual SDK)
+- **MCP (Model Context Protocol)** - Extend AI capabilities with external tool servers
 - **@ Mentions** - Include content from other running macOS apps in your chat
 - **Per-app permissions** for context capture and text insertion
+- **In-app update checker** - Automatic GitHub release checking with download links
+- **Appearance settings** - Light/Dark/System theme, adjustable text scale
+- **Launch at Login** support
 - **Clean, minimal UI** inspired by modern chat interfaces
 
 ## Screenshots
@@ -98,14 +102,21 @@ Hover over any message to see action buttons:
 
 ```
 YoDaAI/
-├── YoDaAIApp.swift           # App entry point, SwiftData setup
-├── ContentView.swift         # Main UI components
+├── YoDaAIApp.swift           # App entry point, SwiftData setup, settings window
+├── ContentView.swift         # Main UI (NavigationSplitView)
 ├── ChatViewModel.swift       # Chat logic and state management
 ├── OpenAICompatibleClient.swift  # API client with streaming
 ├── AccessibilityService.swift    # macOS accessibility integration
+├── LLMSettings.swift         # App settings (UserDefaults singleton)
+├── UpdateChecker.swift       # GitHub release update checker
+├── MCPToolRegistry.swift     # MCP tool discovery and execution
 ├── Item.swift                # ChatThread, ChatMessage models
 ├── LLMProvider.swift         # Provider configuration model
-└── AppPermissionsStore.swift # Per-app permission management
+├── AppPermissionsStore.swift # Per-app permission management
+├── Features/Chat/            # Chat UI components (15 files)
+├── Features/Sidebar/         # Sidebar thread list
+├── Views/Settings/           # Settings tabs (7 files)
+└── Views/Components/         # Shared UI components (StatusBadge)
 ```
 
 ## Supported Providers
@@ -218,7 +229,7 @@ The script will prompt you to select version bump type and confirm before procee
 1. ✅ Check for uncommitted changes (fails if dirty)
 2. ✅ Determine version (from bump type or custom version)
 3. ✅ Generate changelog from git commits since last tag
-4. ✅ Update version in Info.plist
+4. ✅ Update Info.plist (version, build number, commit hash, build date)
 5. ✅ Commit version bump
 6. ✅ Build Release configuration
 7. ✅ Code sign app (ad-hoc signing)
