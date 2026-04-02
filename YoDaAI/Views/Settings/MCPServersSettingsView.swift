@@ -80,7 +80,6 @@ struct MCPServersSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .id(toolRegistry.tools.count)
         .task {
             if toolRegistry.isMCPEnabled && !servers.isEmpty && toolRegistry.tools.isEmpty {
                 try? await Task.sleep(for: .milliseconds(100))
