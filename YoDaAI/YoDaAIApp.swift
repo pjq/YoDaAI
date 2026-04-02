@@ -116,6 +116,8 @@ struct YoDaAIApp: App {
     init() {
         // Request Accessibility permission on first launch
         requestAccessibilityPermissionOnStartup()
+        // Apply saved appearance (light/dark/system)
+        LLMSettings.shared.applyAppearance()
     }
 
     var sharedModelContainer: ModelContainer = {
@@ -243,23 +245,21 @@ private func requestAccessibilityPermissionOnStartup() {
 // MARK: - App Settings View (for Settings scene)
 struct AppSettingsView: View {
     @EnvironmentObject private var settingsRouter: SettingsRouter
-    @StateObject private var viewModel = ChatViewModel(
-        accessibilityService: AccessibilityService(),
-        permissionsStore: AppPermissionsStore()
-    )
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Custom tab bar
             SettingsTabBar(selectedTab: $settingsRouter.selectedTab)
-            
+
             Divider()
-            
+
             // Tab content
             Group {
                 switch settingsRouter.selectedTab {
                 case .general:
-                    GeneralSettingsView(viewModel: viewModel)
+                    GeneralSettingsView()
+                case .appearance:
+                    AppearanceSettingsView()
                 case .apiKeys:
                     APIKeysSettingsView()
                 case .mcpServers:
@@ -269,8 +269,9 @@ struct AppSettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.easeInOut(duration: 0.15), value: settingsRouter.selectedTab)
         }
-        .frame(width: 650, height: 500)
+        .frame(minWidth: 600, idealWidth: 700, minHeight: 450, idealHeight: 550)
     }
 }
 
@@ -286,7 +287,14 @@ struct SettingsTabBar: View {
                 icon: "gear",
                 title: "General"
             )
-            
+
+            SettingsTabButton(
+                tab: .appearance,
+                selectedTab: $selectedTab,
+                icon: "paintbrush",
+                title: "Appearance"
+            )
+
             SettingsTabButton(
                 tab: .apiKeys,
                 selectedTab: $selectedTab,

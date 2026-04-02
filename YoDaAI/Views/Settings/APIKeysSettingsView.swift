@@ -25,6 +25,7 @@ struct APIKeysSettingsView: View {
     @State private var isFetchingModels: Bool = false
     @State private var modelsErrorMessage: String?
     @State private var fetchTask: Task<Void, Never>?
+    @State private var showDeleteConfirmation = false
 
     private var selectedProvider: LLMProvider? {
         providers.first(where: { $0.id == selectedProviderID })
@@ -35,7 +36,13 @@ struct APIKeysSettingsView: View {
             Section("Custom provider") {
                 Picker("Choose your provider", selection: $selectedProviderID) {
                     ForEach(providers) { provider in
-                        Text(provider.name).tag(Optional(provider.id))
+                        HStack {
+                            Text(provider.name)
+                            if provider.isDefault {
+                                StatusBadge(text: "Default", color: .accentColor)
+                            }
+                        }
+                        .tag(Optional(provider.id))
                     }
                 }
                 Text("The URL should point to an OpenAI Compatible API")
@@ -54,16 +61,39 @@ struct APIKeysSettingsView: View {
                         debouncedFetchModels()
                     }
 
-                if !fetchedModels.isEmpty || isFetchingModels {
+                // Model picker with loading states
+                if draftBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     HStack {
-                        Picker("Model", selection: $selectedModelID) {
-                            ForEach(fetchedModels) { model in
-                                Text(model.id).tag(model.id)
-                            }
-                        }
-                        if isFetchingModels {
-                            ProgressView()
-                                .controlSize(.small)
+                        Text("Model")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("Enter a base URL to discover models")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                } else if isFetchingModels {
+                    HStack {
+                        Text("Model")
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Fetching models...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if fetchedModels.isEmpty && modelsErrorMessage == nil {
+                    HStack {
+                        Text("Model")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("No models found")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                } else if !fetchedModels.isEmpty {
+                    Picker("Model", selection: $selectedModelID) {
+                        ForEach(fetchedModels) { model in
+                            Text(model.id).tag(model.id)
                         }
                     }
                 }
@@ -88,21 +118,33 @@ struct APIKeysSettingsView: View {
             }
 
             Section("Manage Providers") {
-                HStack {
-                    Button("Add Provider") {
-                        addProvider()
+                if providers.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Providers", systemImage: "key.slash")
+                    } description: {
+                        Text("Add an LLM provider to start chatting")
+                    } actions: {
+                        Button("Add Provider") {
+                            addProvider()
+                        }
                     }
-                    Spacer()
-                    Button("Delete", role: .destructive) {
-                        deleteSelectedProvider()
+                } else {
+                    HStack {
+                        Button("Add Provider") {
+                            addProvider()
+                        }
+                        Spacer()
+                        Button("Delete", role: .destructive) {
+                            showDeleteConfirmation = true
+                        }
+                        .disabled(providers.count <= 1)
                     }
-                    .disabled(providers.count <= 1)
-                }
 
-                Button("Set as Default") {
-                    setSelectedProviderDefault()
+                    Button("Set as Default") {
+                        setSelectedProviderDefault()
+                    }
+                    .disabled(selectedProvider?.isDefault == true)
                 }
-                .disabled(selectedProvider?.isDefault == true)
             }
         }
         .formStyle(.grouped)
@@ -112,6 +154,14 @@ struct APIKeysSettingsView: View {
         }
         .onChange(of: selectedProviderID) {
             loadSelectedProviderDrafts()
+        }
+        .confirmationDialog("Delete Provider?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                deleteSelectedProvider()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently remove \"\(selectedProvider?.name ?? "this provider")\" and its configuration.")
         }
     }
 
@@ -263,6 +313,12 @@ struct APIKeysSettingsView: View {
             isDefault: true
         )
         modelContext.insert(migrated)
+
+        // Clean up legacy records after migration
+        for record in legacySettingsRecords {
+            modelContext.delete(record)
+        }
+
         Task { try? modelContext.save() }
 
         selectedProviderID = migrated.id

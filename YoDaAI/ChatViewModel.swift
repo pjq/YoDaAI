@@ -3,55 +3,6 @@ import Combine
 import SwiftData
 import AppKit
 
-// MARK: - LLM Settings
-/// Settings for LLM API calls, persisted via UserDefaults
-final class LLMSettings: ObservableObject {
-    static let shared = LLMSettings()
-    
-    @Published var temperature: Double {
-        didSet { UserDefaults.standard.set(temperature, forKey: "llm_temperature") }
-    }
-    
-    @Published var maxTokens: Int {
-        didSet { UserDefaults.standard.set(maxTokens, forKey: "llm_maxTokens") }
-    }
-    
-    @Published var maxMessageCount: Int {
-        didSet { UserDefaults.standard.set(maxMessageCount, forKey: "llm_maxMessageCount") }
-    }
-    
-    @Published var systemPrompt: String {
-        didSet { UserDefaults.standard.set(systemPrompt, forKey: "llm_systemPrompt") }
-    }
-    
-    @Published var useSystemPrompt: Bool {
-        didSet { UserDefaults.standard.set(useSystemPrompt, forKey: "llm_useSystemPrompt") }
-    }
-
-    @Published var enableMarkdown: Bool {
-        didSet { UserDefaults.standard.set(enableMarkdown, forKey: "llm_enableMarkdown") }
-    }
-
-    private init() {
-        // Load from UserDefaults with defaults
-        self.temperature = UserDefaults.standard.object(forKey: "llm_temperature") as? Double ?? 1.0
-        self.maxTokens = UserDefaults.standard.object(forKey: "llm_maxTokens") as? Int ?? 0
-        self.maxMessageCount = UserDefaults.standard.object(forKey: "llm_maxMessageCount") as? Int ?? 20
-        self.systemPrompt = UserDefaults.standard.string(forKey: "llm_systemPrompt") ?? "You are a helpful assistant."
-        self.useSystemPrompt = UserDefaults.standard.object(forKey: "llm_useSystemPrompt") as? Bool ?? true
-        self.enableMarkdown = UserDefaults.standard.object(forKey: "llm_enableMarkdown") as? Bool ?? true
-    }
-    
-    func reset() {
-        temperature = 1.0
-        maxTokens = 0
-        maxMessageCount = 20
-        systemPrompt = "You are a helpful assistant."
-        useSystemPrompt = true
-        enableMarkdown = true
-    }
-}
-
 @MainActor
 final class ChatViewModel: ObservableObject {
     @Published var composerText: String = ""
@@ -63,7 +14,6 @@ final class ChatViewModel: ObservableObject {
     }
     @Published var lastErrorMessage: String?
     @Published var imageErrorMessage: String?  // Error message for image operations
-    @Published var alwaysAttachAppContext: Bool = true
     @Published var streamingMessageID: UUID?  // Track the message being streamed
     @Published var mentionedApps: [RunningApp] = []  // Apps mentioned with @
     @Published var mentionedAppContexts: [String: AppContextSnapshot] = [:] // Cached captured content by bundleIdentifier
@@ -672,7 +622,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         // Also add frontmost app context if enabled (and not already mentioned)
-        if alwaysAttachAppContext {
+        if LLMSettings.shared.alwaysAttachAppContext {
             let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true)
 
             if let snapshot {

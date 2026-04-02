@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct ComposerView: View {
     @Environment(\.modelContext) private var modelContext
     @ObservedObject var viewModel: ChatViewModel
+    @ObservedObject private var llmSettings = LLMSettings.shared
     let thread: ChatThread
     let providers: [LLMProvider]
     @Binding var showModelPicker: Bool
@@ -91,13 +92,13 @@ struct ComposerView: View {
                         .help("Add app context (@)")
 
                         Button {
-                            viewModel.alwaysAttachAppContext.toggle()
+                            llmSettings.alwaysAttachAppContext.toggle()
                         } label: {
-                            Image(systemName: viewModel.alwaysAttachAppContext ? "bolt.fill" : "bolt")
+                            Image(systemName: llmSettings.alwaysAttachAppContext ? "bolt.fill" : "bolt")
                         }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(viewModel.alwaysAttachAppContext ? .yellow : .secondary)
-                        .help(viewModel.alwaysAttachAppContext ? "Auto-attach frontmost app: On" : "Auto-attach frontmost app: Off")
+                        .foregroundStyle(llmSettings.alwaysAttachAppContext ? .yellow : .secondary)
+                        .help(llmSettings.alwaysAttachAppContext ? "Auto-attach frontmost app: On" : "Auto-attach frontmost app: Off")
 
                         Button {
                             showFilePicker = true

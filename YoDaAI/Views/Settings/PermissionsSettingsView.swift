@@ -26,9 +26,12 @@ struct PermissionsSettingsView: View {
                             Image(systemName: isAccessibilityGranted ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .foregroundStyle(isAccessibilityGranted ? Color.green : Color.red)
                                 .font(.title2)
-                            Text(isAccessibilityGranted ? "Granted" : "Not Granted")
+                            Text("Accessibility")
                                 .font(.headline)
-                                .foregroundStyle(isAccessibilityGranted ? Color.primary : Color.red)
+                            StatusBadge(
+                                text: isAccessibilityGranted ? "Granted" : "Not Granted",
+                                color: isAccessibilityGranted ? .green : .red
+                            )
                         }
                         Text("Required to capture content from other apps and insert text")
                             .font(.caption)
@@ -122,11 +125,17 @@ struct PermissionsSettingsView: View {
 
             Section("Per-App Permissions") {
                 if permissionRules.isEmpty {
-                    Text("No apps recorded yet. Use @ mentions or enable auto-context to populate this list.")
-                        .foregroundStyle(.secondary)
+                    ContentUnavailableView {
+                        Label("No Apps Recorded", systemImage: "app.dashed")
+                    } description: {
+                        Text("Use @ mentions or enable auto-context to populate this list")
+                    }
                 } else {
                     ForEach(permissionRules) { rule in
-                        HStack {
+                        HStack(spacing: 12) {
+                            AppIconView(bundleIdentifier: rule.bundleIdentifier)
+                                .frame(width: 28, height: 28)
+
                             VStack(alignment: .leading) {
                                 Text(rule.displayName)
                                 Text(rule.bundleIdentifier)
@@ -134,7 +143,7 @@ struct PermissionsSettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            
+
                             VStack {
                                 Text("Context")
                                     .font(.caption2)
@@ -149,7 +158,7 @@ struct PermissionsSettingsView: View {
                                 .toggleStyle(.switch)
                                 .labelsHidden()
                             }
-                            
+
                             VStack {
                                 Text("Insert")
                                     .font(.caption2)
@@ -166,6 +175,7 @@ struct PermissionsSettingsView: View {
                             }
                         }
                     }
+                    .onDelete(perform: deletePermissionRules)
                 }
             }
         }
@@ -182,7 +192,14 @@ struct PermissionsSettingsView: View {
     private func checkAccessibilityPermission() {
         isAccessibilityGranted = AXIsProcessTrusted()
     }
-    
+
+    private func deletePermissionRules(at offsets: IndexSet) {
+        for index in offsets {
+            modelContext.delete(permissionRules[index])
+        }
+        Task { try? modelContext.save() }
+    }
+
     private func startRefreshTimer() {
         // Check every 2 seconds while the view is visible
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
