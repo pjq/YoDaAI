@@ -403,6 +403,7 @@ final class MCPToolRegistry: ObservableObject {
         clients.removeAll()
         serverStatus.removeAll()
         lastFetchTime = nil
+        isLoading = false
     }
     
     /// Remove client for a specific server (e.g., when server is deleted)
