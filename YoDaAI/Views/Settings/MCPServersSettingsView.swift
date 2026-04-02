@@ -27,6 +27,8 @@ struct MCPServersSettingsView: View {
                     .onChange(of: toolRegistry.isMCPEnabled) { _, newValue in
                         if newValue {
                             Task { await toolRegistry.refreshTools(servers: servers) }
+                        } else {
+                            toolRegistry.clearCache()
                         }
                     }
             } footer: {

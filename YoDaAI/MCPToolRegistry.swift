@@ -90,22 +90,23 @@ final class MCPToolRegistry: ObservableObject {
             serverStatus.removeAll()
             return
         }
-        
+
         // Prevent concurrent refreshes
         guard !isLoading else {
             print("[MCPToolRegistry] Refresh already in progress, skipping...")
             return
         }
-        
+
         isLoading = true
         lastError = nil
-        
+
         let enabledServers = servers.filter { $0.isEnabled && $0.hasValidEndpoint }
-        
+        let refreshingEndpoints = Set(enabledServers.map { $0.endpoint })
+
         print("[MCPToolRegistry] Starting refresh with \(enabledServers.count) enabled servers: \(enabledServers.map { $0.name })")
-        
-        // Clear existing tools before refresh
-        tools = []
+
+        // Only clear tools for the servers being refreshed, keep tools from other servers
+        tools.removeAll { refreshingEndpoints.contains($0.serverEndpoint) }
         
         // Process servers in PARALLEL so slow servers don't block fast ones
         await withTaskGroup(of: (MCPServer, Result<[MCPToolWithServer], Error>).self) { group in
