@@ -129,7 +129,30 @@ struct YoDaAIApp: App {
             AppContextAttachment.self,
             MCPServer.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        // Use an explicit store URL so the app always finds its own database,
+        // even when running outside the sandbox (e.g. Xcode debug builds).
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let storeDir = appSupport.appendingPathComponent("me.pjq.YoDaAI", isDirectory: true)
+        try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        let storeURL = storeDir.appendingPathComponent("default.store")
+
+        // When running sandboxed, migrate the old store from the bare Application Support
+        // directory to the new app-specific subdirectory. Skip when non-sandboxed because
+        // the bare default.store may belong to a different app.
+        let fm = FileManager.default
+        let isSandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+        if isSandboxed, !fm.fileExists(atPath: storeURL.path) {
+            let oldStore = appSupport.appendingPathComponent("default.store")
+            if fm.fileExists(atPath: oldStore.path) {
+                for ext in ["", "-wal", "-shm"] {
+                    let src = appSupport.appendingPathComponent("default.store\(ext)")
+                    let dst = storeDir.appendingPathComponent("default.store\(ext)")
+                    try? fm.copyItem(at: src, to: dst)
+                }
+            }
+        }
+
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, url: storeURL)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
