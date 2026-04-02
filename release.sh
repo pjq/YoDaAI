@@ -120,6 +120,8 @@ generate_changelog() {
 update_info_plist() {
     local version=$1
     local build_number=$(git rev-list --count HEAD)
+    local commit_hash=$(git rev-parse --short HEAD)
+    local build_date=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
     if [ ! -f "$INFO_PLIST" ]; then
         print_info "Creating Info.plist..."
@@ -132,6 +134,10 @@ update_info_plist() {
     <string>${version}</string>
     <key>CFBundleVersion</key>
     <string>${build_number}</string>
+    <key>CommitHash</key>
+    <string>${commit_hash}</string>
+    <key>BuildDate</key>
+    <string>${build_date}</string>
 </dict>
 </plist>
 EOF
@@ -142,9 +148,15 @@ EOF
 
         /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$INFO_PLIST" 2>/dev/null || \
         /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $build_number" "$INFO_PLIST"
+
+        /usr/libexec/PlistBuddy -c "Set :CommitHash $commit_hash" "$INFO_PLIST" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Add :CommitHash string $commit_hash" "$INFO_PLIST"
+
+        /usr/libexec/PlistBuddy -c "Set :BuildDate $build_date" "$INFO_PLIST" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Add :BuildDate string $build_date" "$INFO_PLIST"
     fi
 
-    print_success "Updated Info.plist: v${version} (${build_number})"
+    print_success "Updated Info.plist: v${version} (${build_number}) commit:${commit_hash}"
 }
 
 # Build Release configuration

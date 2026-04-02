@@ -164,8 +164,23 @@ struct GeneralSettingsView: View {
                 HStack {
                     Text("YoDaAI")
                     Spacer()
-                    Text("Version \(updateChecker.currentVersion)")
+                    Text("Version \(updateChecker.currentVersion) (\(updateChecker.buildNumber))")
                         .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text("Build")
+                    Spacer()
+                    Text("\(updateChecker.commitHash)")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    if !updateChecker.buildDate.isEmpty {
+                        Text("·")
+                            .foregroundStyle(.quaternary)
+                        Text(updateChecker.buildDate)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 // Update status

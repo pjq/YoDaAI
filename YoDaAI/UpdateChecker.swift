@@ -54,6 +54,18 @@ final class UpdateChecker: ObservableObject {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
+    var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+    }
+
+    var commitHash: String {
+        Bundle.main.infoDictionary?["CommitHash"] as? String ?? "dev"
+    }
+
+    var buildDate: String {
+        Bundle.main.infoDictionary?["BuildDate"] as? String ?? ""
+    }
+
     private init() {
         if let timestamp = UserDefaults.standard.object(forKey: Self.lastCheckedKey) as? Double {
             lastChecked = Date(timeIntervalSince1970: timestamp)
