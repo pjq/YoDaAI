@@ -157,6 +157,14 @@ EOF
     fi
 
     print_success "Updated Info.plist: v${version} (${build_number}) commit:${commit_hash}"
+
+    # Also update Xcode project build settings (MARKETING_VERSION / CURRENT_PROJECT_VERSION)
+    local pbxproj="${PROJECT_DIR}/YoDaAI.xcodeproj/project.pbxproj"
+    if [ -f "$pbxproj" ]; then
+        sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = ${version}/g" "$pbxproj"
+        sed -i '' "s/CURRENT_PROJECT_VERSION = [^;]*/CURRENT_PROJECT_VERSION = ${build_number}/g" "$pbxproj"
+        print_success "Updated project.pbxproj: MARKETING_VERSION=${version}, CURRENT_PROJECT_VERSION=${build_number}"
+    fi
 }
 
 # Build Release configuration
