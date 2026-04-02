@@ -12,6 +12,7 @@ struct GeneralSettingsView: View {
     @ObservedObject var floatingPanelController = FloatingPanelController.shared
     @ObservedObject var cacheService = ContentCacheService.shared
     @ObservedObject var llmSettings = LLMSettings.shared
+    @ObservedObject var updateChecker = UpdateChecker.shared
     @State private var showCachedAppsSheet = false
     @State private var showResetConfirmation = false
     @State private var showClearCacheConfirmation = false
@@ -159,12 +160,81 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("About") {
+            Section("About & Updates") {
                 HStack {
                     Text("YoDaAI")
                     Spacer()
-                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")")
+                    Text("Version \(updateChecker.currentVersion)")
                         .foregroundStyle(.secondary)
+                }
+
+                // Update status
+                HStack {
+                    if updateChecker.isChecking {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking for updates...")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else if updateChecker.updateAvailable, let latest = updateChecker.latestVersion {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .foregroundStyle(.blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Version \(latest) is available")
+                                .font(.callout)
+                                .fontWeight(.medium)
+                            if let notes = updateChecker.releaseNotes, !notes.isEmpty {
+                                Text(notes.prefix(200) + (notes.count > 200 ? "..." : ""))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                            }
+                        }
+                        Spacer()
+                        Button("Download") {
+                            updateChecker.openDownload()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+
+                        Button {
+                            updateChecker.openReleasePage()
+                        } label: {
+                            Image(systemName: "safari")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open release page")
+                    } else if let error = updateChecker.errorMessage {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    } else if updateChecker.latestVersion != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("You're up to date")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                }
+
+                HStack {
+                    Button("Check for Updates") {
+                        updateChecker.checkForUpdate()
+                    }
+                    .disabled(updateChecker.isChecking)
+
+                    Spacer()
+
+                    if let lastChecked = updateChecker.lastChecked {
+                        Text("Last checked: \(lastChecked, style: .relative) ago")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
         }

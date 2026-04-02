@@ -118,6 +118,10 @@ struct YoDaAIApp: App {
         requestAccessibilityPermissionOnStartup()
         // Apply saved appearance (light/dark/system)
         LLMSettings.shared.applyAppearance()
+        // Check for updates silently (once per day)
+        Task { @MainActor in
+            UpdateChecker.shared.checkForUpdate(force: false)
+        }
     }
 
     var sharedModelContainer: ModelContainer = {

@@ -113,7 +113,6 @@ private struct MCPServerRowView: View {
     var onEdit: () -> Void
 
     @Environment(\.modelContext) private var modelContext
-    @State private var isHovered = false
 
     private var serverToolsCount: Int {
         toolRegistry.tools.filter { $0.serverEndpoint == server.endpoint }.count
@@ -178,12 +177,6 @@ private struct MCPServerRowView: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor.opacity(isHovered ? 0.06 : 0))
-        )
-        .onHover { isHovered = $0 }
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
     }
 }
 

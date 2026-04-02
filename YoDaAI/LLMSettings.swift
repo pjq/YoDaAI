@@ -67,7 +67,7 @@ final class LLMSettings: ObservableObject {
     @Published var appearanceMode: AppearanceMode {
         didSet {
             UserDefaults.standard.set(appearanceMode.rawValue, forKey: "app_appearanceMode")
-            NSApp.appearance = appearanceMode.nsAppearance
+            NSApp?.appearance = appearanceMode.nsAppearance
         }
     }
 
@@ -102,6 +102,6 @@ final class LLMSettings: ObservableObject {
     }
 
     func applyAppearance() {
-        NSApp.appearance = appearanceMode.nsAppearance
+        NSApp?.appearance = appearanceMode.nsAppearance
     }
 }
