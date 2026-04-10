@@ -260,6 +260,8 @@ final class ChatViewModel: ObservableObject {
         currentTask = nil
         isSending = false
         streamingMessageID = nil  // Clear streaming indicator
+        toolExecutionState = nil  // Clear tool execution card
+        toolExecutionMessageID = nil
     }
     
     /// Start sending with Task tracking for cancellation

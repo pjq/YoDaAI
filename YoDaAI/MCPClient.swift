@@ -76,7 +76,7 @@ actor MCPClientWrapper {
             throw MCPClientError.invalidURL
         }
         
-        print("[MCPClient] Connecting to MCP server: \(url) (transport: \(server.transport.displayName), timeout: \(server.connectionTimeout)s)")
+        print("[MCPClient] Connecting to MCP server: \(url) (transport: \(server.transport.displayName), timeout: \(server.connectionTimeout)s, toolCallTimeout: \(server.toolCallTimeout)s)")
         
         // Create the MCP client
         let mcpClient = Client(
@@ -93,8 +93,13 @@ actor MCPClientWrapper {
         switch server.transport {
         case .httpStreamable:
             // HTTP Streamable transport (default, modern MCP)
+            // Use tool call timeout for the URLSession so long-running tool calls don't get cut off
+            let sessionConfig = URLSessionConfiguration.default
+            sessionConfig.timeoutIntervalForRequest = server.toolCallTimeoutInterval
+            sessionConfig.timeoutIntervalForResource = server.toolCallTimeoutInterval
             let httpTransport = HTTPClientTransport(
                 endpoint: url,
+                configuration: sessionConfig,
                 streaming: true,
                 requestModifier: { [server] request in
                     var modifiedRequest = request
@@ -111,7 +116,7 @@ actor MCPClientWrapper {
             // Legacy SSE transport (for servers like AMAP)
             let sseTransport = LegacySSETransport(
                 endpoint: url,
-                timeout: server.timeoutInterval,
+                timeout: server.toolCallTimeoutInterval,
                 requestModifier: { [server] request in
                     var modifiedRequest = request
                     for (key, value) in server.buildHeaders() {
