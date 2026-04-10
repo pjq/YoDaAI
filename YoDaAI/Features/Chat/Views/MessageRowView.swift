@@ -16,7 +16,6 @@ struct MessageRowView: View, Equatable {
 
     @State private var showDeleteConfirmation = false
     @State private var showCopiedFeedback = false
-    @State private var isHovered = false
 
     @Environment(\.appScaleManager) private var scaleManager
 
@@ -42,7 +41,7 @@ struct MessageRowView: View, Equatable {
         HStack(alignment: .top) {
             if message.role == .user { Spacer(minLength: 60) }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
+            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
                 if hasAttachments {
                     MessageImageGridView(
                         attachments: message.attachments,
@@ -50,27 +49,20 @@ struct MessageRowView: View, Equatable {
                     )
                 }
 
-                // Message bubble with action toolbar overlaid at bottom
+                // Message bubble
                 messageBubble
-                    .overlay(alignment: message.role == .user ? .bottomTrailing : .bottomLeading) {
-                        if !isStreaming {
-                            actionToolbar
-                                // Shift upward so toolbar sits just outside the bubble bottom
-                                .offset(y: 28)
-                                .opacity(isHovered ? 1 : 0)
-                                .animation(.easeInOut(duration: 0.12), value: isHovered)
-                        }
-                    }
-                    // Track hover on the bubble itself — no gap possible
-                    .onHover { isHovered = $0 }
+
+                // Inline action toolbar (hidden while streaming)
+                if !isStreaming {
+                    actionToolbar
+                        .padding(.top, 2)
+                }
 
                 // Tool execution card (assistant only)
                 if let state = toolExecutionState, toolExecutionMessageID == message.id {
                     MCPToolExecutionCard(state: state).padding(.top, 4)
                 }
             }
-            // Extra bottom padding to make room for the action toolbar offset
-            .padding(.bottom, isStreaming ? 0 : 24)
 
             if message.role != .user { Spacer(minLength: 60) }
         }
@@ -139,10 +131,10 @@ struct MessageRowView: View, Equatable {
         }
     }
 
-    // MARK: - Action toolbar
+    // MARK: - Action toolbar (inline, flat style)
 
     private var actionToolbar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             actionButton(
                 systemImage: showCopiedFeedback ? "checkmark" : "doc.on.doc",
                 help: "Copy",
@@ -166,18 +158,12 @@ struct MessageRowView: View, Equatable {
 
             actionButton(
                 systemImage: "trash",
-                help: "Delete",
-                tint: .red
+                help: "Delete"
             ) {
                 showDeleteConfirmation = true
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-        // Extend hover area to cover toolbar itself so it stays visible when mouse moves onto it
-        .onHover { isHovered = $0 }
+        .padding(.horizontal, 2)
     }
 
     @ViewBuilder
@@ -190,9 +176,9 @@ struct MessageRowView: View, Equatable {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 12 * scaleManager.scale, weight: .medium))
-                .foregroundStyle(tint ?? Color.secondary)
-                .frame(width: 26, height: 26)
+                .font(.system(size: 11 * scaleManager.scale, weight: .medium))
+                .foregroundStyle(tint ?? Color.secondary.opacity(0.7))
+                .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

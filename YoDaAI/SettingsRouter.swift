@@ -11,6 +11,7 @@ final class SettingsRouter: ObservableObject {
         case apiKeys
         case mcpServers
         case permissions
+        case importExport
     }
 
     func open(_ tab: SettingsTab) {

@@ -890,13 +890,15 @@ final class ChatViewModel: ObservableObject {
         let originalContent = contentToCheck
 
         // Extract the base content (text before any tool execution indicators)
-        // Remove any existing tool execution messages
+        // Remove any existing tool execution messages and strip tool_call XML tags
         var baseContent = assistantMessage.content
         if let range = baseContent.range(of: "\n\n🔧 Executing tools...") {
             baseContent = String(baseContent[..<range.lowerBound])
         } else if let range = baseContent.range(of: "\n🔧 Executing") {
             baseContent = String(baseContent[..<range.lowerBound])
         }
+        // Strip <tool_call> XML tags so they don't show in the UI
+        baseContent = stripToolCallXML(from: baseContent).trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Execute each tool call and collect results, showing progress to user
         var toolResults: [(name: String, arguments: String, result: String, success: Bool)] = []
@@ -1040,6 +1042,10 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
+        // Strip any <tool_call> XML tags from the displayed message content
+        assistantMessage.content = stripToolCallXML(from: assistantMessage.content)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
         // Final save to persist all changes
         // Save assistant message (ModelContext must stay on its thread)
         Task {
@@ -1153,21 +1159,21 @@ final class ChatViewModel: ObservableObject {
     /// Strip tool call XML from content (supports both JSON and XML formats)
     private func stripToolCallXML(from content: String) -> String {
         var result = content
-        
-        // Strip JSON format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
-        let jsonPattern = #"<tool_call>\s*\{[\s\S]*?\}\s*</tool_call>"#
-        if let regex = try? NSRegularExpression(pattern: jsonPattern, options: []) {
+
+        // Strip <tool_call>...</tool_call> (any content inside)
+        let toolCallPattern = #"<tool_call>[\s\S]*?</tool_call>"#
+        if let regex = try? NSRegularExpression(pattern: toolCallPattern, options: [.dotMatchesLineSeparators]) {
             let range = NSRange(result.startIndex..., in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
-        
+
         // Strip XML format: <execute><invoke name="...">...</invoke></execute>
         let xmlPattern = #"<(?:execute|tool)>\s*<invoke\s+name="[^"]+">[\s\S]*?</invoke>\s*</(?:execute|tool)>"#
-        if let regex = try? NSRegularExpression(pattern: xmlPattern, options: []) {
+        if let regex = try? NSRegularExpression(pattern: xmlPattern, options: [.dotMatchesLineSeparators]) {
             let range = NSRange(result.startIndex..., in: result)
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
         }
-        
+
         return result
     }
     

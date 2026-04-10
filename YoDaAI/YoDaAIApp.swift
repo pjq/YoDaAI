@@ -291,6 +291,8 @@ struct AppSettingsView: View {
                     MCPServersSettingsView()
                 case .permissions:
                     PermissionsSettingsView()
+                case .importExport:
+                    ImportExportSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -339,6 +341,13 @@ struct SettingsTabBar: View {
                 selectedTab: $selectedTab,
                 icon: "lock.shield",
                 title: "Permissions"
+            )
+
+            SettingsTabButton(
+                tab: .importExport,
+                selectedTab: $selectedTab,
+                icon: "arrow.up.arrow.down",
+                title: "Data"
             )
         }
         .padding(.vertical, 12)

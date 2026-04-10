@@ -109,15 +109,20 @@ struct MessageListView: View {
                         }
                     }
                 }
-                // Send started/finished — reload and scroll only if at bottom
+                // Send started/finished — reload and scroll smoothly
                 .onChange(of: viewModel.isSending) { _, newVal in
                     updateTask?.cancel()
                     updateTask = Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
-                        if isAtBottom {
-                            scrollToBottom(proxy: proxy, animated: true)
-                        }
-                        if !newVal {
+                        if newVal {
+                            // Send just started: smooth-scroll to bottom and start tracking
+                            // so there's no gap before streamingMessageID is set
+                            if isAtBottom {
+                                scrollToBottom(proxy: proxy, animated: true)
+                            }
+                            scrollTracker.startStreamingScroll()
+                        } else {
+                            // Sending finished
                             scrollTracker.stopStreamingScroll()
                         }
                     }
@@ -174,7 +179,7 @@ struct MessageListView: View {
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
         if animated {
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(.easeInOut(duration: 0.3)) {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
         } else {
@@ -280,7 +285,7 @@ private struct ScrollPositionTracker {
             guard maxY > currentY + 1 else { return }  // already at bottom
             // Use NSAnimationContext for smooth per-frame easing
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.1
+                ctx.duration = 0.15
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 sv.contentView.animator().setBoundsOrigin(NSPoint(x: 0, y: maxY))
                 sv.reflectScrolledClipView(sv.contentView)
