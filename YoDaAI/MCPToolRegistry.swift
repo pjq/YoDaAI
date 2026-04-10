@@ -319,9 +319,9 @@ final class MCPToolRegistry: ObservableObject {
             throw MCPClientError.notInitialized
         }
         
-        // Find the server configuration to get the timeout
+        // Find the server configuration to get the tool call timeout
         let server = servers.first(where: { $0.endpoint == foundTool.serverEndpoint })
-        let timeout = server?.timeoutInterval ?? 60.0
+        let timeout = server?.toolCallTimeoutInterval ?? 300.0
         
         print("[MCPToolRegistry] Calling tool '\(actualToolName)' with timeout: \(Int(timeout))s")
         

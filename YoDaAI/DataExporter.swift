@@ -66,6 +66,7 @@ struct MCPServerExport: Codable {
     let apiKey: String
     let customHeadersJSON: String
     let connectionTimeout: Int
+    let toolCallTimeout: Int?
     let createdAt: Date
     let updatedAt: Date
 }
@@ -145,6 +146,7 @@ enum DataExporter {
                 transportRawValue: s.transportRawValue, isEnabled: s.isEnabled,
                 apiKey: s.apiKey, customHeadersJSON: s.customHeadersJSON,
                 connectionTimeout: s.connectionTimeout,
+                toolCallTimeout: s.toolCallTimeout,
                 createdAt: s.createdAt, updatedAt: s.updatedAt
             )
         }
@@ -251,6 +253,7 @@ enum DataExporter {
             server.apiKey = s.apiKey
             server.customHeadersJSON = s.customHeadersJSON
             server.connectionTimeout = s.connectionTimeout
+            server.toolCallTimeout = s.toolCallTimeout ?? 300
             server.createdAt = s.createdAt
             server.updatedAt = s.updatedAt
             context.insert(server)

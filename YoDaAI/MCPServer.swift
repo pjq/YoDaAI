@@ -34,6 +34,9 @@ final class MCPServer {
     
     /// Connection timeout in seconds (default: 60)
     var connectionTimeout: Int = 60
+
+    /// Tool call execution timeout in seconds (default: 300 = 5 minutes)
+    var toolCallTimeout: Int = 300
     
     /// When this server was created
     var createdAt: Date = Date()
@@ -50,6 +53,11 @@ final class MCPServer {
     /// Get timeout as TimeInterval
     var timeoutInterval: TimeInterval {
         TimeInterval(max(10, connectionTimeout))  // Minimum 10 seconds
+    }
+
+    /// Get tool call timeout as TimeInterval
+    var toolCallTimeoutInterval: TimeInterval {
+        TimeInterval(max(10, toolCallTimeout))  // Minimum 10 seconds
     }
     
     /// Parse custom headers from JSON

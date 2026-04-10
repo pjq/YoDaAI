@@ -225,6 +225,7 @@ private struct MCPServerDetailSheet: View {
     @State private var draftApiKey: String = ""
     @State private var draftTransport: MCPTransport = .httpStreamable
     @State private var draftTimeout: Int = 60
+    @State private var draftToolCallTimeout: Int = 300
     @State private var draftCustomHeaders: [String: String] = [:]
     @State private var newHeaderKey: String = ""
     @State private var newHeaderValue: String = ""
@@ -237,6 +238,7 @@ private struct MCPServerDetailSheet: View {
             || server.apiKey != draftApiKey
             || server.transport != draftTransport
             || server.connectionTimeout != draftTimeout
+            || server.toolCallTimeout != draftToolCallTimeout
             || server.customHeaders != draftCustomHeaders
     }
 
@@ -287,6 +289,13 @@ private struct MCPServerDetailSheet: View {
                         Text("2 minutes").tag(120)
                         Text("5 minutes").tag(300)
                         Text("10 minutes").tag(600)
+                    }
+                    Picker("Tool Call Timeout", selection: $draftToolCallTimeout) {
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
+                        Text("30 minutes").tag(1800)
                     }
                 }
 
@@ -377,6 +386,7 @@ private struct MCPServerDetailSheet: View {
         draftApiKey = server.apiKey
         draftTransport = server.transport
         draftTimeout = server.connectionTimeout
+        draftToolCallTimeout = server.toolCallTimeout
         draftCustomHeaders = server.customHeaders
     }
 
@@ -386,6 +396,7 @@ private struct MCPServerDetailSheet: View {
         server.apiKey = draftApiKey
         server.transport = draftTransport
         server.connectionTimeout = draftTimeout
+        server.toolCallTimeout = draftToolCallTimeout
         server.customHeaders = draftCustomHeaders
         server.updatedAt = Date()
         Task { try? modelContext.save() }
@@ -419,6 +430,7 @@ private struct MCPServerAddSheet: View {
     @State private var apiKey: String = ""
     @State private var transport: MCPTransport = .sse
     @State private var timeout: Int = 60
+    @State private var toolCallTimeout: Int = 300
     @State private var customHeaders: [String: String] = [:]
     @State private var newHeaderKey: String = ""
     @State private var newHeaderValue: String = ""
@@ -452,6 +464,13 @@ private struct MCPServerAddSheet: View {
                         Text("2 minutes").tag(120)
                         Text("5 minutes").tag(300)
                         Text("10 minutes").tag(600)
+                    }
+                    Picker("Tool Call Timeout", selection: $toolCallTimeout) {
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                        Text("5 minutes").tag(300)
+                        Text("10 minutes").tag(600)
+                        Text("30 minutes").tag(1800)
                     }
                     Toggle("Enable after adding", isOn: $isEnabled)
                 }
@@ -517,6 +536,7 @@ private struct MCPServerAddSheet: View {
             timeout: timeout
         )
         server.isEnabled = isEnabled
+        server.toolCallTimeout = toolCallTimeout
         server.customHeaders = customHeaders
         modelContext.insert(server)
         Task { try? modelContext.save() }
