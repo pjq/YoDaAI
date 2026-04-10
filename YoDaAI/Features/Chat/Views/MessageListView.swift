@@ -62,6 +62,8 @@ struct MessageListView: View {
                                 },
                                 onDelete: {
                                     viewModel.deleteMessage(messageData.message, in: modelContext)
+                                    // Remove from local display immediately
+                                    displayedMessages.removeAll { $0.id == messageData.id }
                                 }
                             )
                             .id(messageData.id)
