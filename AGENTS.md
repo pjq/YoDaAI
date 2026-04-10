@@ -10,6 +10,7 @@ This document provides AI agents with the necessary context to understand and co
 - Multiple LLM provider management with auto-fetch models from `/v1/models`
 - Accessibility-based "chat with any app" context capture
 - Per-app permissions for context capture and text insertion
+- Data import/export (backup and restore all data as JSON)
 - Clean, minimal UI inspired by the "Alter" app design
 
 ## Tech Stack
@@ -58,6 +59,7 @@ YoDaAI/
 │   │       ├── AppearanceSettingsView.swift
 │   │       ├── CachedAppsViews.swift
 │   │       ├── GeneralSettingsView.swift
+│   │       ├── ImportExportSettingsView.swift
 │   │       ├── MCPServersSettingsView.swift
 │   │       ├── MCPSharedComponents.swift
 │   │       └── PermissionsSettingsView.swift
@@ -68,6 +70,7 @@ YoDaAI/
 │   ├── OpenAICompatibleClient.swift  # API client for LLM providers
 │   ├── AccessibilityService.swift    # macOS accessibility integration
 │   ├── AppPermissionsStore.swift     # Per-app permission management
+│   ├── DataExporter.swift           # Import/export all data as JSON
 │   ├── LLMSettings.swift            # App settings (UserDefaults-backed singleton)
 │   ├── UpdateChecker.swift          # GitHub release update checker
 │   ├── MCPToolRegistry.swift        # MCP tool discovery and execution
@@ -111,6 +114,7 @@ YoDaAI/
 | `LLMSettings.swift` | `LLMSettings` | App-wide settings (temperature, system prompt, appearance) persisted via UserDefaults |
 | `UpdateChecker.swift` | `UpdateChecker` | GitHub Releases API update checker with semantic version comparison |
 | `MCPToolRegistry.swift` | `MCPToolRegistry` | MCP tool discovery, caching, and execution |
+| `DataExporter.swift` | `DataExporter` | Import/export all app data (chats, providers, settings) as JSON |
 
 ### UI Components (Feature-based Architecture)
 
@@ -144,6 +148,7 @@ YoDaAI/
 | `MCPServersSettingsView` | Settings | MCP server configuration |
 | `MCPSharedComponents` | Settings | Shared MCP UI components (status indicators, headers editor, connection tester) |
 | `CachedAppsViews` | Settings | Cached app detail views (extracted from GeneralSettingsView) |
+| `ImportExportSettingsView` | Settings | Data import/export (JSON backup and restore) |
 | **Shared Components** | `Views/Components/` | |
 | `StatusBadge` | Components | Reusable capsule-shaped pill badge |
 

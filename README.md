@@ -18,6 +18,7 @@ A native macOS chat application that connects to OpenAI-compatible LLM providers
 - **Per-app permissions** for context capture and text insertion
 - **In-app update checker** - Automatic GitHub release checking with download links
 - **Appearance settings** - Light/Dark/System theme, adjustable text scale
+- **Data import/export** - Backup and restore all chats, providers, settings as JSON
 - **Launch at Login** support
 - **Clean, minimal UI** inspired by modern chat interfaces
 
