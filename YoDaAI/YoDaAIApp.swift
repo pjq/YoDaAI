@@ -135,19 +135,39 @@ struct YoDaAIApp: App {
             AppContextAttachment.self,
             MCPServer.self,
         ])
-        // Use an explicit store URL so the app always finds its own database,
-        // even when running outside the sandbox (e.g. Xcode debug builds).
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let storeDir = appSupport.appendingPathComponent("me.pjq.YoDaAI", isDirectory: true)
-        try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+        // Use an explicit store URL so both sandboxed and non-sandboxed builds
+        // share the same database. When sandboxed (installed app), Application Support
+        // resolves to ~/Library/Containers/me.pjq.YoDaAI/Data/Library/Application Support.
+        // When non-sandboxed (Xcode debug), it resolves to ~/Library/Application Support.
+        // To keep them in sync, non-sandboxed builds use the sandbox container path.
+        let fm = FileManager.default
+        let isSandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+
+        let storeDir: URL
+        if isSandboxed {
+            let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            storeDir = appSupport.appendingPathComponent("me.pjq.YoDaAI", isDirectory: true)
+        } else {
+            // Non-sandboxed: use the sandbox container path so we share the same DB
+            let home = fm.homeDirectoryForCurrentUser
+            let containerAppSupport = home
+                .appendingPathComponent("Library/Containers/me.pjq.YoDaAI/Data/Library/Application Support", isDirectory: true)
+            if fm.fileExists(atPath: containerAppSupport.path) {
+                storeDir = containerAppSupport.appendingPathComponent("me.pjq.YoDaAI", isDirectory: true)
+            } else {
+                // Sandbox container doesn't exist yet (app never installed); use local path
+                let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                storeDir = appSupport.appendingPathComponent("me.pjq.YoDaAI", isDirectory: true)
+            }
+        }
+
+        try? fm.createDirectory(at: storeDir, withIntermediateDirectories: true)
         let storeURL = storeDir.appendingPathComponent("default.store")
 
         // When running sandboxed, migrate the old store from the bare Application Support
-        // directory to the new app-specific subdirectory. Skip when non-sandboxed because
-        // the bare default.store may belong to a different app.
-        let fm = FileManager.default
-        let isSandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+        // directory to the new app-specific subdirectory.
         if isSandboxed, !fm.fileExists(atPath: storeURL.path) {
+            let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             let oldStore = appSupport.appendingPathComponent("default.store")
             if fm.fileExists(atPath: oldStore.path) {
                 for ext in ["", "-wal", "-shm"] {
@@ -159,6 +179,7 @@ struct YoDaAIApp: App {
         }
 
         let modelConfiguration = ModelConfiguration(url: storeURL)
+        print("[YoDaAI] SwiftData store: \(storeURL.path) (sandboxed: \(isSandboxed))")
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
