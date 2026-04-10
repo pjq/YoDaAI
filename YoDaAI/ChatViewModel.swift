@@ -1061,23 +1061,25 @@ final class ChatViewModel: ObservableObject {
         toolExecutionState = .completed(results: executionResults)
         // State persists — the MCPToolExecutionCard stays collapsed in message history
 
-        // Note: Recursive tool calling disabled to prevent infinite loops
-        // The LLM should include all necessary tool calls in a single response
-        // Multi-turn tool use should be handled by the user asking follow-up questions
-        // If you need multi-turn tool support, enable this with stricter limits
-
-        /* DISABLED - causes infinite loop when LLM keeps requesting more searches
-        try await executeToolCallsIfNeeded(
-            assistantMessage: assistantMessage,
-            thread: thread,
-            provider: provider,
-            mcpServers: mcpServers,
-            requestMessages: updatedMessages,
-            settings: settings,
-            in: context,
-            depth: depth + 1
-        )
-        */
+        // Check if the follow-up response contains more tool calls (e.g., LLM retrying
+        // after a validation error, or chaining multiple tools). Recurse with depth limit.
+        if MCPToolRegistry.containsToolCalls(totalContent) && depth + 1 < maxToolIterations {
+            print("[MCP] Follow-up response contains more tool calls, recursing (depth: \(depth + 1))")
+            // Build messages including the follow-up response
+            var nextMessages = updatedMessages
+            nextMessages.append(OpenAIChatMessage(role: "assistant", content: totalContent))
+            try await executeToolCallsIfNeeded(
+                assistantMessage: assistantMessage,
+                thread: thread,
+                provider: provider,
+                mcpServers: mcpServers,
+                requestMessages: nextMessages,
+                settings: settings,
+                in: context,
+                depth: depth + 1,
+                fullResponseWithToolCalls: totalContent
+            )
+        }
     }
     
     /// Format progress text while tools are executing
