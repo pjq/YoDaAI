@@ -78,7 +78,8 @@ struct MessageListView: View {
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
+                    .padding(.top, 20)
+                    .padding(.bottom, 120)
                 }
                 .background(
                     ScrollPositionTrackerView(
