@@ -90,7 +90,10 @@ struct MessageListView: View {
                 // New message added — scroll only if already at bottom
                 .onChange(of: messages.count) {
                     if isAtBottom {
-                        scrollToBottom(proxy: proxy, animated: true)
+                        // Delay one frame so SwiftUI has laid out the new row
+                        DispatchQueue.main.async {
+                            scrollToBottom(proxy: proxy, animated: true)
+                        }
                     }
                 }
                 // Streaming started → reload list for new row + start smooth auto-scroll
@@ -100,13 +103,18 @@ struct MessageListView: View {
                     updateTask = Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
                         if newID != nil {
-                            // Start streaming: scroll to bottom immediately, then keep tracking
-                            if isAtBottom {
+                            // Start streaming: ensure we're tracking at bottom
+                            isAtBottom = true
+                            // Delay one frame for layout, then scroll + start timer
+                            DispatchQueue.main.async {
+                                scrollToBottom(proxy: proxy, animated: false)
+                                scrollTracker.startStreamingScroll()
+                            }
+                        } else {
+                            // Streaming finished — one final scroll then stop
+                            DispatchQueue.main.async {
                                 scrollToBottom(proxy: proxy, animated: true)
                             }
-                            scrollTracker.startStreamingScroll()
-                        } else {
-                            // Streaming finished
                             scrollTracker.stopStreamingScroll()
                         }
                     }
@@ -117,12 +125,13 @@ struct MessageListView: View {
                     updateTask = Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
                         if newVal {
-                            // Send just started: smooth-scroll to bottom and start tracking
-                            // so there's no gap before streamingMessageID is set
-                            if isAtBottom {
+                            // Send just started: force at-bottom state and scroll
+                            isAtBottom = true
+                            // Delay one frame so the new user message row is laid out
+                            DispatchQueue.main.async {
                                 scrollToBottom(proxy: proxy, animated: true)
+                                scrollTracker.startStreamingScroll()
                             }
-                            scrollTracker.startStreamingScroll()
                         } else {
                             // Sending finished
                             scrollTracker.stopStreamingScroll()
