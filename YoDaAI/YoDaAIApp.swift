@@ -118,6 +118,10 @@ struct YoDaAIApp: App {
         requestAccessibilityPermissionOnStartup()
         // Apply saved appearance (light/dark/system)
         LLMSettings.shared.applyAppearance()
+        // Log app launch for diagnostics
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        DiagnosticLogger.shared.log("YoDaAI \(version) (\(build)) launched", level: .info, category: "App")
         // Check for updates silently (once per day)
         Task { @MainActor in
             UpdateChecker.shared.checkForUpdate(force: false)
@@ -298,7 +302,7 @@ struct AppSettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.15), value: settingsRouter.selectedTab)
         }
-        .frame(minWidth: 600, idealWidth: 700, minHeight: 450, idealHeight: 550)
+        .frame(minWidth: 600, idealWidth: 700, minHeight: 550, idealHeight: 700)
     }
 }
 

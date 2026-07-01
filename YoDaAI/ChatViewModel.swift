@@ -343,10 +343,9 @@ final class ChatViewModel: ObservableObject {
                 let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread, attachments: [], appContexts: [])
                 context.insert(userMessage)
 
-                // CRITICAL FIX: Process images completely off main thread
-                // Even though we're in async context, we need explicit detachment from @MainActor
-                let attachments: [ImageAttachment] = try await Task.detached {
-                    try await withThrowingTaskGroup(of: ImageAttachment.self) { group in
+                // Process images concurrently (ImageStorageService is not @MainActor,
+                // so these operations naturally hop off the main thread via async/await)
+                let attachments: [ImageAttachment] = try await withThrowingTaskGroup(of: ImageAttachment.self) { group in
                     for pendingImage in imagesToSend {
                         group.addTask {
                             try Task.checkCancellation()
@@ -368,13 +367,12 @@ final class ChatViewModel: ObservableObject {
                         }
                     }
 
-                        var results: [ImageAttachment] = []
-                        for try await attachment in group {
-                            results.append(attachment)
-                        }
-                        return results
+                    var results: [ImageAttachment] = []
+                    for try await attachment in group {
+                        results.append(attachment)
                     }
-                }.value
+                    return results
+                }
 
                 // Insert all attachments into context (back on main thread)
                 for attachment in attachments {
@@ -382,11 +380,9 @@ final class ChatViewModel: ObservableObject {
                 }
             }
 
-            // IMMEDIATE UI FIX: Save user messages synchronously so they appear immediately
-            // This ensures the UI shows user messages right after clicking send
-            try await Task.detached {
-                try context.save()
-            }.value
+            // Save user messages so they persist — fire-and-forget since they're already in context
+            // and visible via SwiftUI observation. No need to block the main thread.
+            try? context.save()
 
             // STEP 3: Generate AI response (no need to pass mentions - they're now in message history)
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], cachedContexts: [:], in: context)
@@ -534,6 +530,9 @@ final class ChatViewModel: ObservableObject {
         in context: ModelContext
     ) async throws {
         let settings = LLMSettings.shared
+        let logger = DiagnosticLogger.shared
+        let sendStart = CFAbsoluteTimeGetCurrent()
+        logger.log("sendAssistantResponse starting (model: \(provider.selectedModel), thread: \(thread.title))", level: .info, category: "Chat")
 
         // Build history from thread messages.
         // If a cutoff date was provided (retry path), exclude messages at/after that date.
@@ -743,6 +742,8 @@ final class ChatViewModel: ObservableObject {
         var detectedToolCallDuringStream = false
         var fullResponseWithToolCalls = ""
         var chunkCount = 0  // Track chunk count for batched saves
+        let streamStart = CFAbsoluteTimeGetCurrent()
+        logger.log("Stream starting for \(provider.selectedModel) (\(requestMessages.count) messages)", level: .info, category: "Net")
 
         // PERFORMANCE FIX: Batch streaming updates to reduce UI re-renders
         var streamBuffer = ""
@@ -804,6 +805,10 @@ final class ChatViewModel: ObservableObject {
             assistantMessage.content += streamBuffer
             streamBuffer = ""
         }
+
+        // Log stream completion
+        let streamElapsed = CFAbsoluteTimeGetCurrent() - streamStart
+        logger.log("Stream completed: \(chunkCount) chunks, \(assistantMessage.content.count) chars, \(String(format: "%.1f", streamElapsed))s", level: .info, category: "Net")
 
         // Final save after streaming completes
         // Save assistant message (ModelContext must stay on its thread)

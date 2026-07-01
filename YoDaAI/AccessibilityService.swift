@@ -8,10 +8,12 @@ private let axEditableAttribute = "AXEditable" // kAXEditableAttribute is not al
 // Timeout for AX element operations (in seconds) - prevents hangs when target app is unresponsive
 private let kAXTimeout: Float = 2.0
 
-// Reduced limits for tree traversal to prevent hangs
-private let kMaxTreeDepth = 10  // Increased for email clients with nested content
-private let kMaxTotalChars = 8000  // Increased to capture more email content
-private let kMaxChildrenPerLevel = 30
+// Tree traversal limits — tiered to handle both native and Electron apps
+private let kMaxFindDepth = 12          // findMainContentArea — just locating the content root
+private let kMaxExtractDepth = 20       // extractAllText — depth WITHIN the found content area
+private let kMaxTotalChars = 8000       // safety cap on total captured text
+private let kMaxChildrenPerLevel = 30   // children per level for normal elements
+private let kMaxChildrenInWebArea = 50  // children per level inside web areas (Electron apps)
 
 struct AppContextSnapshot: Sendable {
     var appName: String
@@ -163,7 +165,11 @@ final class AccessibilityService {
     /// Capture context from a specific app by bundle identifier
     /// Note: For best results, the app should be brought to front first
     func captureContext(for bundleIdentifier: String, promptIfNeeded: Bool) -> AppContextSnapshot? {
+        let logger = DiagnosticLogger.shared
+        logger.log("captureContext starting for \(bundleIdentifier)", level: .debug, category: "AX")
+
         guard ensurePermission(promptIfNeeded: promptIfNeeded) else {
+            logger.log("Permission not granted", level: .warning, category: "AX")
             print("[AccessibilityService] Permission not granted")
             return nil
         }
@@ -250,12 +256,13 @@ final class AccessibilityService {
             }
             
             // Try main content area first - look for known content roles
+            var totalChars = 0
             if let mainContent = findMainContentArea(in: mainWindow) {
                 print("[AccessibilityService] Found main content area")
-                extractAllText(from: mainContent, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
+                extractAllText(from: mainContent, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: kMaxTotalChars)
             } else {
                 // Extract content from window hierarchy
-                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
+                extractAllText(from: mainWindow, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: kMaxTotalChars)
             }
         } else {
             print("[AccessibilityService] No windows found, error: \(windowsError.rawValue)")
@@ -303,8 +310,10 @@ final class AccessibilityService {
         if !combinedContent.isEmpty {
             focusedValuePreview = truncate(combinedContent, limit: 4000)
             print("[AccessibilityService] Total content captured: \(focusedValuePreview?.count ?? 0) chars")
+            logger.log("Captured \(focusedValuePreview?.count ?? 0) chars for \(bundleIdentifier)", level: .info, category: "AX")
         } else {
             print("[AccessibilityService] No content captured - app may need to be brought to front")
+            logger.log("No content captured for \(bundleIdentifier)", level: .warning, category: "AX")
         }
         
         return AppContextSnapshot(
@@ -319,50 +328,44 @@ final class AccessibilityService {
     }
     
     /// Find the main content area in a window (web area, scroll area with text, etc.)
-    private func findMainContentArea(in element: AXUIElement) -> AXUIElement? {
-        // Priority roles for main content - expanded list for email clients
-        let contentRoles = [
-            "AXWebArea",        // Web content (Teams, Outlook web view)
-            "AXScrollArea",     // Scrollable content areas
-            "AXTextArea",       // Text areas
-            "AXGroup",          // Generic groups
-            "AXStaticText",     // Static text (email body)
-            "AXTextField",      // Text fields
-            "AXList",           // Lists (email threads)
-            "AXTable",          // Tables (email content)
-            "AXOutline"         // Outlines (folder structures)
-        ]
+    private func findMainContentArea(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+        // Guard against infinite recursion (circular AX trees or extremely deep hierarchies)
+        guard depth < kMaxFindDepth else { return nil }
 
         var childrenRef: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return nil }
 
-        // First pass: Look for elements with substantial content
+        // First pass: Look for AXWebArea (primary target for Electron/web apps)
+        // or elements with substantial AXValue content
         for child in children.prefix(kMaxChildrenPerLevel) {
             setAXTimeout(for: child)
             let role = copyAXString(child, attribute: kAXRoleAttribute)
 
-            // Check for substantial text content
+            // AXWebArea is always a valid content root — return immediately if it has children
+            if role == "AXWebArea" {
+                var webChildrenRef: CFTypeRef?
+                let webErr = AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &webChildrenRef)
+                if webErr == .success, let webChildren = webChildrenRef as? [AXUIElement], !webChildren.isEmpty {
+                    print("[AccessibilityService] Found AXWebArea with \(webChildren.count) children")
+                    return child
+                }
+            }
+
+            // Check for elements with substantial text content
             if let value = copyAXString(child, attribute: kAXValueAttribute), value.count > 100 {
                 print("[AccessibilityService] Found content area with \(value.count) chars, role: \(role ?? "unknown")")
                 return child
             }
-
-            // For email clients, look for scroll areas that might contain the message body
-            if role == "AXScrollArea" {
-                // Recursively check if this scroll area has content
-                if let found = findMainContentArea(in: child) {
-                    return found
-                }
-            }
         }
 
-        // Second pass: Recursively search in priority roles
+        // Second pass: Recurse into structural containers that might hold a web area
+        let containerRoles: Set<String> = ["AXScrollArea", "AXGroup", "AXSplitGroup", "AXTabGroup"]
         for child in children.prefix(kMaxChildrenPerLevel) {
             setAXTimeout(for: child)
             let role = copyAXString(child, attribute: kAXRoleAttribute)
-            if let role = role, contentRoles.contains(role) {
-                if let found = findMainContentArea(in: child) {
+            if let role = role, containerRoles.contains(role) {
+                if let found = findMainContentArea(in: child, depth: depth + 1) {
                     return found
                 }
             }
@@ -660,18 +663,9 @@ final class AccessibilityService {
             """
 
         case "com.microsoft.teams2", "com.microsoft.teams", "com.microsoft.Teams":
-            // Teams: Limited AppleScript support, mainly window info
-            script = """
-            tell application "System Events"
-                tell process "Microsoft Teams"
-                    if (count of windows) is 0 then
-                        return ""
-                    end if
-                    set windowName to name of front window
-                    return windowName
-                end tell
-            end tell
-            """
+            // Teams: AppleScript cannot access Electron web content.
+            // Return nil to fall through to Accessibility API which can traverse the AX tree.
+            return nil
 
         default:
             // For unsupported apps, return nil to try other methods
@@ -858,6 +852,7 @@ final class AccessibilityService {
         
         let appElement = createAppElement(pid: pid)
         var contents: [String] = []
+        var totalChars = 0
         
         // Debug: List all available attributes on the app element
         var attrNames: CFArray?
@@ -925,7 +920,7 @@ final class AccessibilityService {
             
             // For Electron apps, try walking up to find content
             if focusedRole == "AXWebArea" || focusedRole == "AXGroup" || focusedRole == "AXTextField" || focusedRole == "AXTextArea" {
-                extractAllText(from: focusedElement, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
+                extractAllText(from: focusedElement, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: kMaxTotalChars)
             }
         }
         
@@ -942,7 +937,7 @@ final class AccessibilityService {
                 windowTitle = copyAXString(focusedWindow, attribute: kAXTitleAttribute)
                 print("[AccessibilityService] Focused window title: \(windowTitle ?? "nil")")
             }
-            extractAllText(from: focusedWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
+            extractAllText(from: focusedWindow, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: kMaxTotalChars)
         }
         
         // 3. Try windows array as fallback
@@ -958,10 +953,10 @@ final class AccessibilityService {
                 windowTitle = copyAXString(mainWindow, attribute: kAXTitleAttribute)
             }
             if contents.isEmpty {
-                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
+                extractAllText(from: mainWindow, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: kMaxTotalChars)
             }
         }
-        
+
         // 4. Try AXMainWindow attribute
         var mainWindowRef: CFTypeRef?
         let mainWindowError = AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &mainWindowRef)
@@ -974,7 +969,7 @@ final class AccessibilityService {
                 windowTitle = copyAXString(mainWindow, attribute: kAXTitleAttribute)
             }
             if contents.isEmpty {
-                extractAllText(from: mainWindow, into: &contents, depth: 0, maxTotal: kMaxTotalChars)
+                extractAllText(from: mainWindow, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: kMaxTotalChars)
             }
         }
         
@@ -1003,10 +998,16 @@ final class AccessibilityService {
     }
     
     /// Extract all text from an accessibility element tree
-    /// Uses reduced depth and limits to prevent hangs
-    private func extractAllText(from element: AXUIElement, into contents: inout [String], depth: Int, maxTotal: Int = 4000) {
-        guard depth < kMaxTreeDepth else { return } // Reduced depth for performance
-        guard contents.joined().count < maxTotal else { return }
+    /// - Parameters:
+    ///   - element: The root element to extract from
+    ///   - contents: Accumulated text fragments
+    ///   - totalChars: Running character count (avoids O(n²) re-computation)
+    ///   - depth: Current recursion depth (resets at web area boundaries)
+    ///   - maxTotal: Maximum total characters to collect
+    ///   - insideWebArea: Whether we're inside a web area (uses higher children limit)
+    private func extractAllText(from element: AXUIElement, into contents: inout [String], totalChars: inout Int, depth: Int, maxTotal: Int = 4000, insideWebArea: Bool = false) {
+        guard depth < kMaxExtractDepth else { return }
+        guard totalChars < maxTotal else { return }
 
         // Set timeout on each element we process
         setAXTimeout(for: element)
@@ -1015,18 +1016,13 @@ final class AccessibilityService {
         let role = copyAXString(element, attribute: kAXRoleAttribute)
         let identifier = copyAXString(element, attribute: kAXIdentifierAttribute as String)
 
-        // Skip UI framework identifiers (common in Electron apps)
-        // These are internal React/Electron component identifiers, not user content
+        // Skip UI chrome identifiers — only things that are never user content
         let skipIdentifiers = [
-            "messageHeaderFromContent",
-            "messageHeaderRecipientsContent",
-            "messageBody",
-            "messageHeader",
             "toolbar",
             "sidebar",
             "navigation",
-            "button",
-            "icon"
+            "menubar",
+            "tabbar"
         ]
 
         let shouldSkipValue = identifier != nil && skipIdentifiers.contains(where: { identifier!.lowercased().contains($0.lowercased()) })
@@ -1042,6 +1038,7 @@ final class AccessibilityService {
 
                 if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) || trimmed.contains($0) }) {
                     contents.append(trimmed)
+                    totalChars += trimmed.count
                     print("[AccessibilityService] Found text (\(role ?? "unknown")): \(trimmed.prefix(50))...")
                 }
             }
@@ -1053,6 +1050,7 @@ final class AccessibilityService {
                     let looksLikeIdentifier = trimmed.range(of: "^[a-z][a-zA-Z]+Content$", options: .regularExpression) != nil
                     if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) }) {
                         contents.append(trimmed)
+                        totalChars += trimmed.count
                     }
                 }
                 // Also try description attribute
@@ -1061,6 +1059,7 @@ final class AccessibilityService {
                     let looksLikeIdentifier = trimmed.range(of: "^[a-z][a-zA-Z]+Content$", options: .regularExpression) != nil
                     if trimmed.count > 3 && !looksLikeIdentifier && !contents.contains(where: { $0.contains(trimmed) }) {
                         contents.append(trimmed)
+                        totalChars += trimmed.count
                     }
                 }
             }
@@ -1075,6 +1074,7 @@ final class AccessibilityService {
                             let trimmed = rowValue.trimmingCharacters(in: .whitespacesAndNewlines)
                             if trimmed.count > 3 && !contents.contains(where: { $0.contains(trimmed) }) {
                                 contents.append(trimmed)
+                                totalChars += trimmed.count
                                 print("[AccessibilityService] Found row text: \(trimmed.prefix(50))...")
                             }
                         }
@@ -1087,36 +1087,40 @@ final class AccessibilityService {
                 let trimmed = help.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.count > 10 && !contents.contains(where: { $0.contains(trimmed) }) {
                     contents.append(trimmed)
+                    totalChars += trimmed.count
                 }
             }
         }
-        
-        // For web areas, get the entire value and stop recursion
+
+        // For web areas, reset depth and use higher children limit
+        // This is the key fix for Electron apps — the web area IS the content boundary
         if role == "AXWebArea" {
             if let value = copyAXString(element, attribute: kAXValueAttribute) {
                 let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.count > 3 && !contents.contains(where: { $0.contains(trimmed) }) {
                     contents.append(trimmed)
+                    totalChars += trimmed.count
                 }
             }
-            // Still recurse into web area children but with limited depth
+            // Recurse into web area children with RESET depth and higher sibling limit
             var childrenRef: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
             if error == .success, let children = childrenRef as? [AXUIElement] {
-                for child in children.prefix(kMaxChildrenPerLevel) {
-                    extractAllText(from: child, into: &contents, depth: depth + 1, maxTotal: maxTotal)
+                for child in children.prefix(kMaxChildrenInWebArea) {
+                    extractAllText(from: child, into: &contents, totalChars: &totalChars, depth: 0, maxTotal: maxTotal, insideWebArea: true)
                 }
             }
             return
         }
-        
+
         // Recurse into children
+        let childLimit = insideWebArea ? kMaxChildrenInWebArea : kMaxChildrenPerLevel
         var childrenRef: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else { return }
-        
-        for child in children.prefix(kMaxChildrenPerLevel) {
-            extractAllText(from: child, into: &contents, depth: depth + 1, maxTotal: maxTotal)
+
+        for child in children.prefix(childLimit) {
+            extractAllText(from: child, into: &contents, totalChars: &totalChars, depth: depth + 1, maxTotal: maxTotal, insideWebArea: insideWebArea)
         }
     }
 

@@ -6,25 +6,29 @@ import Foundation
 enum ContentSegment {
     case text(String)
     case drawio(xml: String)
+    case svg(content: String)
 }
 
 // MARK: - Parser
 
-/// Parses assistant message content into text and draw.io diagram segments.
-/// Detects ```drawio fenced code blocks (and ```xml blocks containing mxGraph XML).
-func parseDrawioSegments(_ content: String) -> [ContentSegment] {
+/// Parses assistant message content into text, draw.io diagram, and SVG segments.
+/// Detects ```drawio, ```svg fenced code blocks (and ```xml blocks containing mxGraph/SVG XML).
+func parseContentSegments(_ content: String) -> [ContentSegment] {
+    print("[Parser] parseContentSegments called, content length: \(content.count)")
     // Normalize line endings — streaming responses may contain \r\n
     let content = content.replacingOccurrences(of: "\r\n", with: "\n")
 
     // Pattern matches ```drawio ... ``` or ```xml ... ``` (where content looks like mxGraph)
-    let pattern = #"```(?:drawio|xml)\n([\s\S]*?)\n?```"#
+    let pattern = #"```(?:drawio|xml|svg)\n([\s\S]*?)\n?```"#
     guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+        print("[Parser] regex creation failed")
         return [.text(content)]
     }
 
     let nsContent = content as NSString
     let fullRange = NSRange(location: 0, length: nsContent.length)
     let matches = regex.matches(in: content, range: fullRange)
+    print("[Parser] found \(matches.count) matches")
 
     if matches.isEmpty {
         return [.text(content)]
@@ -33,9 +37,10 @@ func parseDrawioSegments(_ content: String) -> [ContentSegment] {
     var segments: [ContentSegment] = []
     var lastEnd = 0
 
-    for match in matches {
+    for (i, match) in matches.enumerated() {
         let matchRange = match.range
         let captureRange = match.range(at: 1)
+        print("[Parser] match \(i): range=\(matchRange.location)..\(matchRange.location + matchRange.length)")
 
         // Text before this match
         if matchRange.location > lastEnd {
@@ -52,13 +57,17 @@ func parseDrawioSegments(_ content: String) -> [ContentSegment] {
             let xml = nsContent.substring(with: captureRange).trimmingCharacters(in: .whitespacesAndNewlines)
             let fenceStr = nsContent.substring(with: matchRange)
             let explicitDrawio = fenceStr.hasPrefix("```drawio")
-            // For explicit ```drawio fences, always treat as diagram.
-            // For ```xml fences, require content to look like mxGraph XML.
+            let explicitSvg = fenceStr.hasPrefix("```svg")
+            let isSvgBlock = explicitSvg || isSVGContent(xml)
             let isDrawioBlock = explicitDrawio || isDrawioXML(xml)
-            if isDrawioBlock {
+            print("[Parser] match \(i): explicitSvg=\(explicitSvg), isSvgBlock=\(isSvgBlock), isDrawioBlock=\(isDrawioBlock), contentLength=\(xml.count)")
+
+            if isSvgBlock {
+                print("[Parser] -> SVG segment, length=\(xml.count)")
+                segments.append(.svg(content: xml))
+            } else if isDrawioBlock {
                 segments.append(.drawio(xml: xml))
             } else {
-                // Not valid diagram XML — restore original fenced block as text
                 segments.append(.text(fenceStr))
             }
         }
@@ -88,6 +97,14 @@ private func isDrawioXML(_ xml: String) -> Bool {
     // Secondary markers: common mxGraph child elements
     if lowered.contains("<mxcell") || lowered.contains("&lt;mxcell") { return true }
     if lowered.contains("<mxgeometry") || lowered.contains("&lt;mxgeometry") { return true }
+    return false
+}
+
+private func isSVGContent(_ content: String) -> Bool {
+    let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if trimmed.hasPrefix("<svg") { return true }
+    // Handle XML declaration before SVG root
+    if trimmed.hasPrefix("<?xml") && trimmed.contains("<svg") { return true }
     return false
 }
 

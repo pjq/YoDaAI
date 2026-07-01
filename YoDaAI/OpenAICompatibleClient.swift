@@ -217,8 +217,17 @@ extension OpenAICompatibleError: LocalizedError {
 final class OpenAICompatibleClient: @unchecked Sendable {
     private let urlSession: URLSession
 
-    nonisolated init(urlSession: URLSession = .shared) {
-        self.urlSession = urlSession
+    nonisolated init(urlSession: URLSession? = nil) {
+        if let session = urlSession {
+            self.urlSession = session
+        } else {
+            // Custom configuration with reasonable timeouts for LLM streaming
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 60       // 60s to establish connection
+            config.timeoutIntervalForResource = 600     // 10min max for entire streaming response
+            config.waitsForConnectivity = true
+            self.urlSession = URLSession(configuration: config)
+        }
     }
 
     /// Convert image data to base64 data URL for Vision API
@@ -265,7 +274,7 @@ final class OpenAICompatibleClient: @unchecked Sendable {
         maxTokens: Int? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     guard let root = URL(string: baseURL) else {
                         throw OpenAICompatibleError.invalidBaseURL
@@ -316,6 +325,7 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                     let http = response as? HTTPURLResponse
                     let status = http?.statusCode ?? -1
                     guard (200..<300).contains(status) else {
+                        DiagnosticLogger.shared.log("Stream request failed: HTTP \(status)", level: .error, category: "Net")
                         throw OpenAICompatibleError.badStatus(status)
                     }
                     
@@ -371,8 +381,12 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                     
                     continuation.finish()
                 } catch {
+                    DiagnosticLogger.shared.log("Stream error: \(error.localizedDescription)", level: .error, category: "Net")
                     continuation.finish(throwing: error)
                 }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
             }
         }
     }

@@ -26,6 +26,7 @@ struct APIKeysSettingsView: View {
     @State private var modelsErrorMessage: String?
     @State private var fetchTask: Task<Void, Never>?
     @State private var showDeleteConfirmation = false
+    @State private var showApiKey = false
 
     private var selectedProvider: LLMProvider? {
         providers.first(where: { $0.id == selectedProviderID })
@@ -55,11 +56,36 @@ struct APIKeysSettingsView: View {
                     .onChange(of: draftBaseURL) {
                         debouncedFetchModels()
                     }
-
-                SecureField("API key", text: $draftApiKey)
-                    .onChange(of: draftApiKey) {
-                        debouncedFetchModels()
+                if !draftBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let trimmed = draftBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let base = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+                    HStack {
+                        Spacer()
+                        Text("Endpoint: \(base)/chat/completions")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
+                }
+
+                HStack {
+                    if showApiKey {
+                        TextField("API key", text: $draftApiKey)
+                    } else {
+                        SecureField("API key", text: $draftApiKey)
+                    }
+                    Button {
+                        showApiKey.toggle()
+                    } label: {
+                        Image(systemName: showApiKey ? "eye.slash" : "eye")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .onChange(of: draftApiKey) {
+                    debouncedFetchModels()
+                }
 
                 // Model picker with loading states
                 if draftBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -160,6 +160,22 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Diagnostics") {
+                Toggle("Debug Logging", isOn: $llmSettings.enableDiagnosticLogging)
+                Text("Write diagnostic logs to file for debugging ANR/crash issues")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if llmSettings.enableDiagnosticLogging {
+                    Button("Open Log File") {
+                        NSWorkspace.shared.selectFile(
+                            DiagnosticLogger.shared.logFileLocation.path,
+                            inFileViewerRootedAtPath: DiagnosticLogger.shared.logFileLocation.deletingLastPathComponent().path
+                        )
+                    }
+                }
+            }
+
             Section("About & Updates") {
                 HStack {
                     Text("YoDaAI")
