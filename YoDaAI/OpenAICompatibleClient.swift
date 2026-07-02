@@ -284,6 +284,10 @@ final class OpenAICompatibleClient: @unchecked Sendable {
                     
                     var request = URLRequest(url: endpoint)
                     request.httpMethod = "POST"
+                    // Timeout: if no data arrives within 60s after connection, abort.
+                    // This handles cases where the LLM server accepts the connection
+                    // but never sends any response (causes ANR with indefinite wait).
+                    request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     
