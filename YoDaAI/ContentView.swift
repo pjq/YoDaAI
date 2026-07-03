@@ -174,6 +174,9 @@ struct ContentView: View {
             )
         }
         .navigationSplitViewStyle(.balanced)
+        .sheet(item: $viewModel.pendingApproval) { approval in
+            ApprovalSheet(approval: approval)
+        }
         .task {
             // Initialize MCP connections on app start
             if mcpToolRegistry.isMCPEnabled && !mcpServers.isEmpty {

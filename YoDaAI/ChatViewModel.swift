@@ -26,6 +26,9 @@ final class ChatViewModel: ObservableObject {
     @Published var toolExecutionState: ToolExecutionState? = nil
     @Published var toolExecutionMessageID: UUID? = nil  // Message ID that has active tool execution
 
+    // pi extension-UI approval request awaiting the user's decision (shown as a sheet)
+    @Published var pendingApproval: PiApprovalRequest? = nil
+
     // Task tracking for cancellation
     private var currentTask: Task<Void, Never>?
 
@@ -920,23 +923,16 @@ final class ChatViewModel: ObservableObject {
             callbacks: callbacks)
     }
 
-    /// Handle an extension UI dialog request from pi (approval, input, etc.).
-    /// Phase 5 wires this to a real SwiftUI sheet; for now auto-confirm/allow so
-    /// coding turns aren't blocked during bring-up.
+    /// Handle an extension UI dialog request from pi (approval, input, etc.) by
+    /// presenting a sheet and awaiting the user's decision. Only dialog methods
+    /// (select/confirm/input/editor) reach here; fire-and-forget are handled in
+    /// PiChatEngine.
     private func handlePiUIRequest(_ req: PiExtensionUIRequest) async -> PiExtensionUIResponse? {
-        switch req.method {
-        case "confirm":
-            return .confirm(true, id: req.id)
-        case "select":
-            // Prefer an "Allow"/first option.
-            if let opts = req.options, let allow = opts.first(where: { $0.lowercased().contains("allow") }) ?? opts.first {
-                return .value(allow, id: req.id)
+        await withCheckedContinuation { (continuation: CheckedContinuation<PiExtensionUIResponse?, Never>) in
+            self.pendingApproval = PiApprovalRequest(request: req) { [weak self] response in
+                self?.pendingApproval = nil
+                continuation.resume(returning: response)
             }
-            return .cancel(id: req.id)
-        case "input", "editor":
-            return .value("", id: req.id)
-        default:
-            return .cancel(id: req.id)
         }
     }
 
