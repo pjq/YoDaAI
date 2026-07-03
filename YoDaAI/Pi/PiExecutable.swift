@@ -46,6 +46,22 @@ enum PiExecutable {
         which("node")
     }
 
+    /// A contained scratch directory for loose chats that have no project.
+    /// pi runs here instead of the user's home folder, so it cannot read/write/
+    /// exec across the whole home directory (SSH keys, repos, etc.) by default.
+    /// Created on demand; safe to hand to pi as a working directory.
+    static func scratchDirectory() -> URL {
+        let fm = FileManager.default
+        let base = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                appropriateFor: nil, create: true))
+            ?? fm.temporaryDirectory
+        let scratch = base
+            .appendingPathComponent("YoDaAI", isDirectory: true)
+            .appendingPathComponent("chat-scratch", isDirectory: true)
+        try? fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+        return scratch
+    }
+
     /// GUI apps launched from Finder/Xcode do NOT inherit the user's shell
     /// environment, so exports in ~/.zshrc (e.g. OPENAI_API_KEY that pi's config
     /// references as "$OPENAI_API_KEY") are missing. Capture the login shell's

@@ -122,8 +122,8 @@ struct SkillsSettingsView: View {
             errorMessage = "Configure an LLM provider first."
             return
         }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let all = await PiChatEngine.shared.discoverCommands(workingDirectory: home, provider: provider)
+        let scratch = PiExecutable.scratchDirectory()
+        let all = await PiChatEngine.shared.discoverCommands(workingDirectory: scratch, provider: provider)
         skills = all.filter { $0.source == "skill" }
         if all.isEmpty {
             errorMessage = "Could not reach the pi agent. Build it (../pi: npm run build) or bundle the binary."

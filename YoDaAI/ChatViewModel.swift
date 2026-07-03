@@ -887,12 +887,14 @@ final class ChatViewModel: ObservableObject {
         streamingMessageID = assistantMessage.id
         defer { streamingMessageID = nil }
 
-        // Working directory: the thread's project dir if set, else home.
+        // Working directory: the thread's project dir if set. Loose chats (no
+        // project) run in a contained scratch dir — NOT the home folder — so pi
+        // can't read/write/exec across the user's whole home directory.
         let workingDirectory: URL
         if let dir = thread.project?.workingDirectory, !dir.isEmpty {
             workingDirectory = URL(fileURLWithPath: dir)
         } else {
-            workingDirectory = FileManager.default.homeDirectoryForCurrentUser
+            workingDirectory = PiExecutable.scratchDirectory()
         }
 
         let logger = DiagnosticLogger.shared
