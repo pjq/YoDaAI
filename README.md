@@ -1,19 +1,30 @@
 # YoDaAI
 
-A native macOS chat application that connects to OpenAI-compatible LLM providers. Built with SwiftUI and SwiftData.
+A native macOS AI app that works two ways: a **chat client** for any OpenAI-compatible LLM, and a **Codex-style coding agent** powered by the [pi agent harness](https://pi.dev). Built with SwiftUI and SwiftData.
 
 ![macOS](https://img.shields.io/badge/macOS-26.1+-blue)
 ![Swift](https://img.shields.io/badge/Swift-5-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+## Two backends, one app
+
+YoDaAI has a feature-flagged **Agent Backend** (Settings → General → *Use pi agent*):
+
+- **Direct client** (default): YoDaAI talks to an OpenAI-compatible endpoint over HTTP. Simple chat.
+- **pi agent**: YoDaAI drives a bundled [pi](https://pi.dev) process over its RPC protocol. pi owns the agentic loop — reading/editing files, running commands, and loading **Skills** — scoped to a **Project** working directory. This is the Codex/Claude-Code-desktop-style experience.
+
 ## Features
 
+- **Projects** - Scope chats to a working directory; the pi agent runs there and can code in your repo
+- **pi agent backend** - Bundled, self-contained pi binary (no Node needed) that provides file/edit/bash tools and the agentic loop
+- **Agent Skills** - pi auto-discovers skills from `~/.claude/skills`, `~/.agents/skills`, Claude Code plugin marketplaces, and per-project `.claude/skills`
+- **Tool approvals** - pi's `extension_ui_request` dialogs surface as native approval sheets
 - **Multi-threaded conversations** with persistent storage using SwiftData
 - **Multiple LLM providers** - Connect to OpenAI, Ollama, LM Studio, or any OpenAI-compatible API
 - **Auto-fetch models** from provider's `/v1/models` endpoint
 - **Streaming responses** - See AI responses in real-time
 - **Markdown rendering** with syntax-highlighted code blocks and copy button (Textual SDK)
-- **MCP (Model Context Protocol)** - Extend AI capabilities with external tool servers
+- **MCP (Model Context Protocol)** - External tool servers (direct-client path)
 - **@ Mentions** - Include content from other running macOS apps in your chat
 - **Per-app permissions** for context capture and text insertion
 - **In-app update checker** - Automatic GitHub release checking with download links
@@ -65,6 +76,20 @@ To use the @ mention feature for capturing content from other apps:
 2. Click "Grant Access"
 3. Enable YoDaAI in System Settings > Privacy & Security > Accessibility
 
+### 3. Enable the pi Agent (Optional)
+
+To use the agentic coding backend instead of the direct client:
+
+1. Open Settings (⌘,) → **General** → toggle **Use pi agent**
+2. In a release build the pi binary is bundled inside the app — nothing to install.
+   For development (running from Xcode), the app falls back to running pi from a
+   sibling `../pi` checkout (`node packages/coding-agent/dist/cli.js`), or `pi` on your `PATH`.
+3. Add a **Project** (see below) so the agent has a working directory to code in.
+
+> **Note:** pi reads its provider/model/auth from your `~/.pi/agent/` configuration.
+> The app passes your login-shell environment to pi so any `$VAR` references in that
+> config (e.g. an API key) resolve the same way they do in your terminal.
+
 ## Usage
 
 ### Basic Chat
@@ -72,6 +97,24 @@ To use the @ mention feature for capturing content from other apps:
 1. Click "+" or press ⌘N to start a new chat
 2. Type your message and press ⌘Return to send
 3. The AI response will stream in real-time
+
+### Projects (pi agent)
+
+The sidebar has a **Projects** section for directory-scoped agent work:
+
+1. Click **+** next to "Projects" and choose a folder (e.g. a git repo)
+2. Start a chat inside that project — the pi agent runs with that folder as its
+   working directory and can read, edit, and run commands there
+3. Loose chats (no project) run in a **contained scratch directory**
+   (`~/Library/Application Support/YoDaAI/chat-scratch`), **not** your home folder,
+   so the agent can't touch your whole home directory by default
+
+### Skills (pi agent)
+
+Settings → **Skills** shows the [Agent Skills](https://agentskills.io) pi has
+discovered. Add a skill by dropping its `SKILL.md` folder into `~/.claude/skills`,
+`~/.agents/skills`, or a project's `.claude/skills`, then click **Refresh**.
+Invoke a skill in chat with `/skill:name`.
 
 ### @ Mentions
 
@@ -104,21 +147,46 @@ Hover over any message to see action buttons:
 ```
 YoDaAI/
 ├── YoDaAIApp.swift           # App entry point, SwiftData setup, settings window
-├── ContentView.swift         # Main UI (NavigationSplitView)
-├── ChatViewModel.swift       # Chat logic and state management
-├── OpenAICompatibleClient.swift  # API client with streaming
+├── ContentView.swift         # Main UI (NavigationSplitView, Projects sidebar)
+├── ChatViewModel.swift       # Chat logic; branches to pi or the direct client
+├── OpenAICompatibleClient.swift  # Direct API client with streaming
 ├── AccessibilityService.swift    # macOS accessibility integration
-├── LLMSettings.swift         # App settings (UserDefaults singleton)
+├── LLMSettings.swift         # App settings incl. usePiAgent flag
 ├── UpdateChecker.swift       # GitHub release update checker
-├── MCPToolRegistry.swift     # MCP tool discovery and execution
+├── MCPToolRegistry.swift     # MCP tool discovery/execution (direct-client path)
 ├── Item.swift                # ChatThread, ChatMessage models
+├── Project.swift             # Project model (working-directory scoping)
 ├── LLMProvider.swift         # Provider configuration model
 ├── AppPermissionsStore.swift # Per-app permission management
-├── Features/Chat/            # Chat UI components (15 files)
+├── Pi/                       # pi agent integration
+│   ├── PiProtocol.swift      # Swift Codable model of pi's RPC protocol
+│   ├── PiAgentBridge.swift   # Spawns `pi --mode rpc`, JSONL framing, event stream
+│   ├── PiChatEngine.swift    # Mirrors pi events into ChatMessage + tool UI
+│   ├── PiExecutable.swift    # Locate pi binary; scratch dir; login-shell env
+│   ├── PiSkillsConfig.swift  # Resolve skill directories to load
+│   └── ApprovalSheet.swift   # Native sheet for pi extension_ui_request dialogs
+├── Features/Chat/            # Chat UI components
 ├── Features/Sidebar/         # Sidebar thread list
-├── Views/Settings/           # Settings tabs (7 files)
+├── Views/Settings/           # Settings tabs (General, Appearance, API Keys,
+│                             #   Skills, MCP Servers, Permissions, Data)
 └── Views/Components/         # Shared UI components (StatusBadge)
 ```
+
+### How the pi backend works
+
+```
+YoDaAI.app (SwiftUI)
+  └─ PiAgentBridge ── spawns ──▶ Resources/pi/pi  (bundled, self-contained)
+        writes JSONL commands → stdin        `pi --mode rpc`, cwd = project dir
+        reads  JSONL events   ← stdout       (owns tools, skills, agentic loop)
+```
+
+The bundled `pi` binary is produced by `bun build --compile` (see
+`../pi/scripts/build-binaries.sh`) and copied into `Contents/Resources/pi/` by
+`release.sh` before code-signing. No Node runtime is required at runtime.
+
+> **App Sandbox is disabled** because YoDaAI spawns pi as a child process, which
+> the sandbox forbids. Distribution is via GitHub DMG (not the Mac App Store).
 
 ## Supported Providers
 

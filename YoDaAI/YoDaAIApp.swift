@@ -118,6 +118,10 @@ struct YoDaAIApp: App {
         requestAccessibilityPermissionOnStartup()
         // Apply saved appearance (light/dark/system)
         LLMSettings.shared.applyAppearance()
+        // Log app launch for diagnostics
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        DiagnosticLogger.shared.log("YoDaAI \(version) (\(build)) launched", level: .info, category: "App")
         // Check for updates silently (once per day)
         Task { @MainActor in
             UpdateChecker.shared.checkForUpdate(force: false)
@@ -134,6 +138,7 @@ struct YoDaAIApp: App {
             ImageAttachment.self,
             AppContextAttachment.self,
             MCPServer.self,
+            Project.self,
         ])
         // Use an explicit store URL so both sandboxed and non-sandboxed builds
         // share the same database. When sandboxed (installed app), Application Support
@@ -287,6 +292,8 @@ struct AppSettingsView: View {
                     AppearanceSettingsView()
                 case .apiKeys:
                     APIKeysSettingsView()
+                case .skills:
+                    SkillsSettingsView()
                 case .mcpServers:
                     MCPServersSettingsView()
                 case .permissions:
@@ -298,7 +305,7 @@ struct AppSettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.15), value: settingsRouter.selectedTab)
         }
-        .frame(minWidth: 600, idealWidth: 700, minHeight: 450, idealHeight: 550)
+        .frame(minWidth: 600, idealWidth: 700, minHeight: 550, idealHeight: 700)
     }
 }
 
@@ -329,6 +336,13 @@ struct SettingsTabBar: View {
                 title: "API Keys"
             )
             
+            SettingsTabButton(
+                tab: .skills,
+                selectedTab: $selectedTab,
+                icon: "wand.and.stars",
+                title: "Skills"
+            )
+
             SettingsTabButton(
                 tab: .mcpServers,
                 selectedTab: $selectedTab,

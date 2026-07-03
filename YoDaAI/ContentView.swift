@@ -16,6 +16,9 @@ struct ContentView: View {
     
     @Query private var mcpServers: [MCPServer]
 
+    @Query(sort: [SortDescriptor(\Project.createdAt, order: .forward)])
+    private var projects: [Project]
+
     @StateObject private var viewModel = ChatViewModel(
         accessibilityService: AccessibilityService(),
         permissionsStore: AppPermissionsStore()
@@ -23,6 +26,7 @@ struct ContentView: View {
     @ObservedObject private var floatingPanelController = FloatingPanelController.shared
     @ObservedObject private var mcpToolRegistry = MCPToolRegistry.shared
     @State private var activeThread: ChatThread?
+    @State private var activeProject: Project?
     @State private var searchText = ""
 
     private var defaultProvider: LLMProvider? {
@@ -36,12 +40,25 @@ struct ContentView: View {
         return threads.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
     }
 
+    /// Loose chats: those not attached to any project. Project chats are shown
+    /// under their project section instead of the date groups.
+    private var looseThreads: [ChatThread] {
+        filteredThreads.filter { $0.project == nil }
+    }
+
     private var todayThreads: [ChatThread] {
-        filteredThreads.filter { Calendar.current.isDateInToday($0.createdAt) }
+        looseThreads.filter { Calendar.current.isDateInToday($0.createdAt) }
     }
 
     private var olderThreads: [ChatThread] {
-        filteredThreads.filter { !Calendar.current.isDateInToday($0.createdAt) }
+        looseThreads.filter { !Calendar.current.isDateInToday($0.createdAt) }
+    }
+
+    /// Chats belonging to a project, newest first, filtered by search.
+    private func threads(for project: Project) -> [ChatThread] {
+        filteredThreads
+            .filter { $0.project?.id == project.id }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     var body: some View {
@@ -56,6 +73,45 @@ struct ContentView: View {
                     }
                 }
             )) {
+                // MARK: Projects
+                Section {
+                    ForEach(projects) { project in
+                        DisclosureGroup {
+                            ForEach(threads(for: project)) { thread in
+                                ThreadRowView(thread: thread)
+                                    .tag(thread)
+                                    .contextMenu {
+                                        Button("Delete", role: .destructive) { deleteThread(thread) }
+                                    }
+                            }
+                            Button {
+                                createNewChat(in: project)
+                            } label: {
+                                Label("New chat", systemImage: "plus")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                        } label: {
+                            Label(project.displayName, systemImage: "folder")
+                                .contextMenu {
+                                    Button("New Chat") { createNewChat(in: project) }
+                                    Button("Remove Project", role: .destructive) { removeProject(project) }
+                                }
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Projects")
+                        Spacer()
+                        Button(action: addProject) {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.plain)
+                        .help("Add a project folder")
+                    }
+                }
+
                 if !todayThreads.isEmpty {
                     Section("Today") {
                         ForEach(todayThreads) { thread in
@@ -118,6 +174,9 @@ struct ContentView: View {
             )
         }
         .navigationSplitViewStyle(.balanced)
+        .sheet(item: $viewModel.pendingApproval) { approval in
+            ApprovalSheet(approval: approval)
+        }
         .task {
             // Initialize MCP connections on app start
             if mcpToolRegistry.isMCPEnabled && !mcpServers.isEmpty {
@@ -163,9 +222,17 @@ struct ContentView: View {
     }
 
     private func createNewChat() {
+        // New loose chats inherit the active project when one is selected, so the
+        // "+" toolbar keeps working within the current project context.
+        createNewChat(in: activeProject)
+    }
+
+    private func createNewChat(in project: Project?) {
         let thread = ChatThread(title: "New Chat")
+        thread.project = project
         modelContext.insert(thread)
         activeThread = thread
+        activeProject = project
 
         // Save changes (ModelContext must stay on its thread)
         Task {
@@ -176,6 +243,32 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NotificationCenter.default.post(name: .focusComposer, object: nil)
         }
+    }
+
+    /// Present an open panel to pick a directory and create a Project for it.
+    private func addProject() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add Project"
+        panel.message = "Choose a project folder for the agent to work in"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let project = Project(name: url.lastPathComponent, workingDirectory: url.path)
+        modelContext.insert(project)
+        activeProject = project
+        Task { try? modelContext.save() }
+    }
+
+    /// Remove a project (chats are nullified back to loose chats, not deleted).
+    private func removeProject(_ project: Project) {
+        if activeProject?.id == project.id { activeProject = nil }
+        // Shut down the pi process for this working directory.
+        let dir = URL(fileURLWithPath: project.workingDirectory)
+        Task { await PiChatEngine.shared.shutdown(workingDirectory: dir) }
+        modelContext.delete(project)
+        Task { try? modelContext.save() }
     }
 
     private func deleteThread(_ thread: ChatThread) {

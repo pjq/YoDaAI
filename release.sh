@@ -203,6 +203,43 @@ find_built_app() {
     echo "$app_path"
 }
 
+# Bundle the self-contained pi agent binary + runtime sidecars into the .app.
+# The binary is produced by ../pi/scripts/build-binaries.sh (bun --compile).
+# Runs BEFORE sign_app so the nested binary is covered by the app signature.
+bundle_pi() {
+    local app_path=$1
+    local pi_repo="${PI_REPO:-$(cd .. && pwd)/pi}"
+    local pi_bin_dir="${pi_repo}/packages/coding-agent/binaries/darwin-arm64"
+
+    print_info "Bundling pi agent binary..."
+
+    # Build the binary if it isn't already present.
+    if [ ! -x "${pi_bin_dir}/pi" ]; then
+        print_info "pi binary not found; building it (this can take a few minutes)..."
+        if [ ! -d "$pi_repo" ]; then
+            print_error "pi repo not found at ${pi_repo} (set PI_REPO). Skipping pi bundling."
+            return 0
+        fi
+        ( cd "$pi_repo" && ./scripts/build-binaries.sh --platform darwin-arm64 ) \
+            || { print_error "pi binary build failed; skipping bundling."; return 0; }
+    fi
+
+    local dest="${app_path}/Contents/Resources/pi"
+    rm -rf "$dest"
+    mkdir -p "$dest"
+
+    # Copy the binary plus only the runtime sidecars (skip docs/examples/changelog).
+    cp "${pi_bin_dir}/pi" "$dest/"
+    chmod +x "${dest}/pi"
+    for side in assets native node_modules theme export-html photon_rs_bg.wasm package.json; do
+        if [ -e "${pi_bin_dir}/${side}" ]; then
+            cp -R "${pi_bin_dir}/${side}" "$dest/"
+        fi
+    done
+
+    print_success "Bundled pi into ${dest}"
+}
+
 # Code sign the app (ad-hoc signing to avoid Gatekeeper issues)
 sign_app() {
     local app_path=$1
@@ -562,6 +599,9 @@ main() {
     print_info "Locating built app..."
     local app_path=$(find_built_app)
     print_success "Found: ${app_path}"
+
+    # Bundle the pi agent binary before signing (so it's covered by the signature)
+    bundle_pi "$app_path"
 
     # Sign the app
     sign_app "$app_path"

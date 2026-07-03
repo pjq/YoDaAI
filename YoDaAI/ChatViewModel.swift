@@ -26,6 +26,9 @@ final class ChatViewModel: ObservableObject {
     @Published var toolExecutionState: ToolExecutionState? = nil
     @Published var toolExecutionMessageID: UUID? = nil  // Message ID that has active tool execution
 
+    // pi extension-UI approval request awaiting the user's decision (shown as a sheet)
+    @Published var pendingApproval: PiApprovalRequest? = nil
+
     // Task tracking for cancellation
     private var currentTask: Task<Void, Never>?
 
@@ -343,10 +346,9 @@ final class ChatViewModel: ObservableObject {
                 let userMessage = ChatMessage(role: .user, content: trimmed, thread: thread, attachments: [], appContexts: [])
                 context.insert(userMessage)
 
-                // CRITICAL FIX: Process images completely off main thread
-                // Even though we're in async context, we need explicit detachment from @MainActor
-                let attachments: [ImageAttachment] = try await Task.detached {
-                    try await withThrowingTaskGroup(of: ImageAttachment.self) { group in
+                // Process images concurrently (ImageStorageService is not @MainActor,
+                // so these operations naturally hop off the main thread via async/await)
+                let attachments: [ImageAttachment] = try await withThrowingTaskGroup(of: ImageAttachment.self) { group in
                     for pendingImage in imagesToSend {
                         group.addTask {
                             try Task.checkCancellation()
@@ -368,13 +370,12 @@ final class ChatViewModel: ObservableObject {
                         }
                     }
 
-                        var results: [ImageAttachment] = []
-                        for try await attachment in group {
-                            results.append(attachment)
-                        }
-                        return results
+                    var results: [ImageAttachment] = []
+                    for try await attachment in group {
+                        results.append(attachment)
                     }
-                }.value
+                    return results
+                }
 
                 // Insert all attachments into context (back on main thread)
                 for attachment in attachments {
@@ -382,11 +383,9 @@ final class ChatViewModel: ObservableObject {
                 }
             }
 
-            // IMMEDIATE UI FIX: Save user messages synchronously so they appear immediately
-            // This ensures the UI shows user messages right after clicking send
-            try await Task.detached {
-                try context.save()
-            }.value
+            // Save user messages so they persist — fire-and-forget since they're already in context
+            // and visible via SwiftUI observation. No need to block the main thread.
+            try? context.save()
 
             // STEP 3: Generate AI response (no need to pass mentions - they're now in message history)
             try await sendAssistantResponse(for: thread, provider: provider, mentionedApps: [], cachedContexts: [:], in: context)
@@ -534,6 +533,9 @@ final class ChatViewModel: ObservableObject {
         in context: ModelContext
     ) async throws {
         let settings = LLMSettings.shared
+        let logger = DiagnosticLogger.shared
+        let sendStart = CFAbsoluteTimeGetCurrent()
+        logger.log("sendAssistantResponse starting (model: \(provider.selectedModel), thread: \(thread.title))", level: .info, category: "Chat")
 
         // Build history from thread messages.
         // If a cutoff date was provided (retry path), exclude messages at/after that date.
@@ -542,6 +544,19 @@ final class ChatViewModel: ObservableObject {
         if let cutoff = cutoffDate {
             history = history.filter { $0.createdAt < cutoff }
         }
+
+        // ---- pi agent path (feature-flagged) ----------------------------------
+        // When enabled, delegate the whole turn to the bundled pi agent, which
+        // owns the tool loop, MCP, and skills. We just create the assistant
+        // placeholder and mirror pi's event stream into it.
+        logger.log("usePiAgent flag = \(settings.usePiAgent)", level: .info, category: "Pi")
+        if settings.usePiAgent {
+            logger.log("Routing turn through pi agent path", level: .info, category: "Pi")
+            try await generateViaPi(for: thread, provider: provider, history: history, in: context)
+            return
+        }
+        logger.log("Using legacy OpenAI-compatible client path", level: .info, category: "Pi")
+        // -----------------------------------------------------------------------
 
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
@@ -743,6 +758,8 @@ final class ChatViewModel: ObservableObject {
         var detectedToolCallDuringStream = false
         var fullResponseWithToolCalls = ""
         var chunkCount = 0  // Track chunk count for batched saves
+        let streamStart = CFAbsoluteTimeGetCurrent()
+        logger.log("Stream starting for \(provider.selectedModel) (\(requestMessages.count) messages)", level: .info, category: "Net")
 
         // PERFORMANCE FIX: Batch streaming updates to reduce UI re-renders
         var streamBuffer = ""
@@ -805,6 +822,10 @@ final class ChatViewModel: ObservableObject {
             streamBuffer = ""
         }
 
+        // Log stream completion
+        let streamElapsed = CFAbsoluteTimeGetCurrent() - streamStart
+        logger.log("Stream completed: \(chunkCount) chunks, \(assistantMessage.content.count) chars, \(String(format: "%.1f", streamElapsed))s", level: .info, category: "Net")
+
         // Final save after streaming completes
         // Save assistant message (ModelContext must stay on its thread)
         Task {
@@ -844,7 +865,91 @@ final class ChatViewModel: ObservableObject {
         // Clear streaming indicator after everything is done
         streamingMessageID = nil
     }
-    
+
+    // MARK: - pi Agent Path
+
+    /// Generate the assistant response via the bundled pi agent (RPC). Mirrors
+    /// pi's streamed events into a placeholder assistant ChatMessage and the
+    /// existing tool-execution UI. pi owns the tool loop / MCP / skills.
+    private func generateViaPi(
+        for thread: ChatThread,
+        provider: LLMProvider,
+        history: [ChatMessage],
+        in context: ModelContext
+    ) async throws {
+        // Latest user message becomes the prompt pi processes.
+        let latestUserText = history.last(where: { $0.role == .user })?.content ?? ""
+
+        // Assistant placeholder (same pattern as the OpenAI path).
+        let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread, attachments: [], appContexts: [])
+        context.insert(assistantMessage)
+        Task { try? context.save() }
+        streamingMessageID = assistantMessage.id
+        defer { streamingMessageID = nil }
+
+        // Working directory: the thread's project dir if set. Loose chats (no
+        // project) run in a contained scratch dir — NOT the home folder — so pi
+        // can't read/write/exec across the user's whole home directory.
+        let workingDirectory: URL
+        if let dir = thread.project?.workingDirectory, !dir.isEmpty {
+            workingDirectory = URL(fileURLWithPath: dir)
+        } else {
+            workingDirectory = PiExecutable.scratchDirectory()
+        }
+
+        let logger = DiagnosticLogger.shared
+        if let resolved = PiExecutable.resolve() {
+            logger.log("pi executable: \(resolved.executable.path) interpreter: \(resolved.interpreter?.path ?? "none")", level: .info, category: "Pi")
+        } else {
+            logger.log("pi executable NOT found (checked bundle Resources/pi/pi, dev cli.js, PATH)", level: .error, category: "Pi")
+        }
+        logger.log("pi working directory: \(workingDirectory.path)", level: .info, category: "Pi")
+        logger.log("pi prompt (first 80): \(String(latestUserText.prefix(80)))", level: .info, category: "Pi")
+
+        let msgID = assistantMessage.id
+        let callbacks = PiChatCallbacks(
+            appendText: { [weak self] delta in
+                guard let self else { return }
+                assistantMessage.content += delta
+                _ = msgID
+            },
+            appendThinking: { _ in
+                // Thinking blocks are not yet surfaced in the UI (future: collapsed view).
+            },
+            setToolState: { [weak self] state in
+                guard let self else { return }
+                self.toolExecutionState = state
+                self.toolExecutionMessageID = (state == nil) ? nil : msgID
+            },
+            save: {
+                Task { try? context.save() }
+            },
+            handleUIRequest: { [weak self] req in
+                await self?.handlePiUIRequest(req)
+            }
+        )
+
+        try await PiChatEngine.shared.generate(
+            prompt: latestUserText,
+            images: [],
+            workingDirectory: workingDirectory,
+            provider: provider,
+            callbacks: callbacks)
+    }
+
+    /// Handle an extension UI dialog request from pi (approval, input, etc.) by
+    /// presenting a sheet and awaiting the user's decision. Only dialog methods
+    /// (select/confirm/input/editor) reach here; fire-and-forget are handled in
+    /// PiChatEngine.
+    private func handlePiUIRequest(_ req: PiExtensionUIRequest) async -> PiExtensionUIResponse? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<PiExtensionUIResponse?, Never>) in
+            self.pendingApproval = PiApprovalRequest(request: req) { [weak self] response in
+                self?.pendingApproval = nil
+                continuation.resume(returning: response)
+            }
+        }
+    }
+
     // MARK: - MCP Tool Execution
     
     /// Execute tool calls from assistant response and continue conversation

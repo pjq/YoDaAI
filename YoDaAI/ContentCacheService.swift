@@ -211,6 +211,8 @@ final class ContentCacheService: ObservableObject {
         
         isCapturing = true
         defer { isCapturing = false }
+
+        let captureStart = CFAbsoluteTimeGetCurrent()
         
         // Update current foreground app
         currentForegroundApp = RunningApp(
@@ -230,15 +232,50 @@ final class ContentCacheService: ObservableObject {
         }
         
         // Fall back to full context capture (traverses window hierarchy)
+        // Use a timeout to prevent AX traversal from blocking the main thread too long
         print("[ContentCacheService] Trying Accessibility API for \(appName)...")
-        let snapshot = accessibilityService.captureContext(for: bundleId, promptIfNeeded: false)
+        let snapshot: AppContextSnapshot? = await withCheckedContinuation { continuation in
+            var hasResumed = false
+            let lock = NSLock()
+
+            let workItem = DispatchWorkItem { [self] in
+                let result = self.accessibilityService.captureContext(for: bundleId, promptIfNeeded: false)
+                lock.lock()
+                if !hasResumed {
+                    hasResumed = true
+                    lock.unlock()
+                    continuation.resume(returning: result)
+                } else {
+                    lock.unlock()
+                }
+            }
+
+            DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
+
+            // Timeout after 3 seconds — don't let AX traversal block the cache cycle
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
+                lock.lock()
+                if !hasResumed {
+                    hasResumed = true
+                    workItem.cancel()
+                    lock.unlock()
+                    print("[ContentCacheService] AX capture timed out for \(appName)")
+                    continuation.resume(returning: nil)
+                } else {
+                    lock.unlock()
+                }
+            }
+        }
         
         if let snapshot = snapshot {
             let cached = CachedAppContent(snapshot: snapshot)
             cache[bundleId] = cached
-            
+
             let contentLength = snapshot.focusedValuePreview?.count ?? 0
+            let elapsed = Int((CFAbsoluteTimeGetCurrent() - captureStart) * 1000)
             print("[ContentCacheService] Cached content for \(appName): \(contentLength) chars")
+            let level: LogLevel = elapsed > 2000 ? .warning : .info
+            DiagnosticLogger.shared.log("Captured \(contentLength) chars for \(appName) in \(elapsed)ms", level: level, category: "Cache")
         } else {
             // Still cache a basic snapshot so we know about the app
             let basicSnapshot = AppContextSnapshot(

@@ -40,6 +40,13 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Agent Backend") {
+                Toggle("Use pi agent (experimental)", isOn: $llmSettings.usePiAgent)
+                Text("Route chat through the bundled pi agent (owns the tool loop, MCP, and skills). When off, YoDaAI uses the direct OpenAI-compatible client.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("LLM Settings") {
                 // Temperature slider
                 VStack(alignment: .leading, spacing: 4) {
@@ -158,6 +165,22 @@ struct GeneralSettingsView: View {
                 Text("Include frontmost app info when sending messages")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Diagnostics") {
+                Toggle("Debug Logging", isOn: $llmSettings.enableDiagnosticLogging)
+                Text("Write diagnostic logs to file for debugging ANR/crash issues")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if llmSettings.enableDiagnosticLogging {
+                    Button("Open Log File") {
+                        NSWorkspace.shared.selectFile(
+                            DiagnosticLogger.shared.logFileLocation.path,
+                            inFileViewerRootedAtPath: DiagnosticLogger.shared.logFileLocation.deletingLastPathComponent().path
+                        )
+                    }
+                }
             }
 
             Section("About & Updates") {

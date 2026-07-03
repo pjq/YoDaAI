@@ -11,10 +11,19 @@ struct AssistantMessageContentView: View {
 
     private var segments: [ContentSegment] {
         let stripped = stripToolCallXML(content)
-        return parseDrawioSegments(stripped)
+        let result = parseContentSegments(stripped)
+        for (i, seg) in result.enumerated() {
+            switch seg {
+            case .text(let t): print("[AssistantContent] segment[\(i)] = .text(\(t.prefix(80))...)")
+            case .drawio: print("[AssistantContent] segment[\(i)] = .drawio")
+            case .svg(let s): print("[AssistantContent] segment[\(i)] = .svg(length=\(s.count))")
+            }
+        }
+        return result
     }
 
     var body: some View {
+        let _ = print("[AssistantContent] body called, \(segments.count) segments, markdown=\(llmSettings.enableMarkdown)")
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 switch segment {
@@ -30,12 +39,13 @@ struct AssistantMessageContentView: View {
                     }
                 case .drawio(let xml):
                     if llmSettings.enableMarkdown {
-                        // Use "drawio" language hint so the header clearly labels it as draw.io
                         MarkdownTextView(content: "```drawio\n\(xml)\n```", drawioXML: xml)
                     } else {
-                        // Plain text mode: just show the button
                         DrawioView(xmlContent: xml)
                     }
+                case .svg(let svgContent):
+                    // Show a compact preview with View SVG button — don't pass large SVG to markdown parser
+                    SvgPreviewView(svgContent: svgContent, enableMarkdown: llmSettings.enableMarkdown)
                 }
             }
         }

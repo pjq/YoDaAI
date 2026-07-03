@@ -13,3 +13,6 @@ xcuserdata/
 
 # Reference images (design screenshots)
 docs/refer/*.png
+
+# Bundled pi agent binary (copied in at release time, never committed)
+YoDaAI/Resources/pi/

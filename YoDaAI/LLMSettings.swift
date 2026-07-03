@@ -58,6 +58,15 @@ final class LLMSettings: ObservableObject {
         didSet { UserDefaults.standard.set(alwaysAttachAppContext, forKey: "llm_alwaysAttachAppContext") }
     }
 
+    // MARK: Agent Backend
+
+    /// When true, chat generation is driven by the bundled pi agent (RPC) instead
+    /// of the direct OpenAI-compatible HTTP client. pi owns the tool loop, MCP,
+    /// and skills. Feature-flagged so the legacy path remains available.
+    @Published var usePiAgent: Bool {
+        didSet { UserDefaults.standard.set(usePiAgent, forKey: "llm_usePiAgent") }
+    }
+
     // MARK: Appearance
 
     @Published var enableMarkdown: Bool {
@@ -75,6 +84,15 @@ final class LLMSettings: ObservableObject {
         didSet { UserDefaults.standard.set(showTimestamps, forKey: "app_showTimestamps") }
     }
 
+    // MARK: Diagnostics
+
+    @Published var enableDiagnosticLogging: Bool {
+        didSet {
+            UserDefaults.standard.set(enableDiagnosticLogging, forKey: "app_enableDiagnosticLogging")
+            DiagnosticLogger.shared.isEnabled = enableDiagnosticLogging
+        }
+    }
+
     // MARK: Init
 
     private init() {
@@ -85,9 +103,16 @@ final class LLMSettings: ObservableObject {
         self.systemPrompt = ud.string(forKey: "llm_systemPrompt") ?? "You are a helpful assistant."
         self.useSystemPrompt = ud.object(forKey: "llm_useSystemPrompt") as? Bool ?? true
         self.alwaysAttachAppContext = ud.object(forKey: "llm_alwaysAttachAppContext") as? Bool ?? true
+        self.usePiAgent = ud.object(forKey: "llm_usePiAgent") as? Bool ?? false
         self.enableMarkdown = ud.object(forKey: "llm_enableMarkdown") as? Bool ?? true
         self.appearanceMode = AppearanceMode(rawValue: ud.integer(forKey: "app_appearanceMode")) ?? .system
         self.showTimestamps = ud.object(forKey: "app_showTimestamps") as? Bool ?? false
+        self.enableDiagnosticLogging = ud.object(forKey: "app_enableDiagnosticLogging") as? Bool ?? false
+
+        // Activate logger if previously enabled
+        if self.enableDiagnosticLogging {
+            DiagnosticLogger.shared.isEnabled = true
+        }
     }
 
     func reset() {
