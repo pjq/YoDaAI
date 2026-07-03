@@ -294,8 +294,8 @@ create_dmg() {
 
     print_info "Creating DMG: ${dmg_name}"
 
-    # Create temporary DMG
-    hdiutil create -size 100m -fs HFS+ -volname "$PROJECT_NAME" "$temp_dmg" > /dev/null 2>&1
+    # Create temporary DMG (250m: app + bundled pi binary ~77MB + headroom)
+    hdiutil create -size 250m -fs HFS+ -volname "$PROJECT_NAME" "$temp_dmg" > /dev/null 2>&1
 
     # Mount it
     local mount_point=$(hdiutil attach "$temp_dmg" | grep Volumes | awk '{print $3}')
