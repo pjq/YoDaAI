@@ -62,10 +62,12 @@ final class PiChatEngine {
             executableURL: resolved.executable,
             interpreterURL: resolved.interpreter,
             workingDirectory: workingDirectory)
-        // Route pi at the same provider/model the user configured, when the
-        // provider name maps to a pi provider. Left nil => pi uses its own default
-        // (e.g. the SAP AI Core proxy already configured in ~/.pi).
         config.noSession = false
+
+        // GUI apps don't inherit the shell environment, so pi's config that
+        // references "$OPENAI_API_KEY" etc. would fail with "No API key found".
+        // Feed pi the user's login-shell environment.
+        config.extraEnvironment = PiExecutable.loginShellEnvironment
 
         // Load skills from ~/.claude/skills, ~/.agents/skills, and the project's
         // .claude/skills (the last requires project trust in RPC mode).
@@ -204,6 +206,7 @@ final class PiChatEngine {
                 interpreterURL: resolved.interpreter,
                 workingDirectory: workingDirectory)
             config.noSession = true
+            config.extraEnvironment = PiExecutable.loginShellEnvironment
             let skills = PiSkillsConfig.skillPaths(for: workingDirectory)
             config.skillPaths = skills.paths
             config.approveProjectTrust = skills.needsApprove

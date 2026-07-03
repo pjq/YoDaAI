@@ -46,6 +46,40 @@ enum PiExecutable {
         which("node")
     }
 
+    /// GUI apps launched from Finder/Xcode do NOT inherit the user's shell
+    /// environment, so exports in ~/.zshrc (e.g. OPENAI_API_KEY that pi's config
+    /// references as "$OPENAI_API_KEY") are missing. Capture the login shell's
+    /// environment once and cache it, so the spawned pi sees the same env the
+    /// user gets in a terminal.
+    static let loginShellEnvironment: [String: String] = {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: shell)
+        // -l login, -i interactive so ~/.zshrc (not just ~/.zprofile) is sourced;
+        // print a NUL-delimited env so values with newlines survive.
+        proc.arguments = ["-lic", "/usr/bin/env -0"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            guard let text = String(data: data, encoding: .utf8) else { return [:] }
+            var env: [String: String] = [:]
+            for entry in text.split(separator: "\0") {
+                if let eq = entry.firstIndex(of: "=") {
+                    let key = String(entry[..<eq])
+                    let value = String(entry[entry.index(after: eq)...])
+                    env[key] = value
+                }
+            }
+            return env
+        } catch {
+            return [:]
+        }
+    }()
+
     /// Minimal `which`: probe common locations and $PATH.
     private static func which(_ name: String) -> URL? {
         let fm = FileManager.default
