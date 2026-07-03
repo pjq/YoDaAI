@@ -52,13 +52,17 @@ nonisolated struct PiLaunchConfig: Sendable {
     var provider: String?
     var model: String?
     var sessionName: String?
+    /// Extra skill file/directory paths to load (pi `--skill`, repeatable, additive).
+    var skillPaths: [String] = []
+    /// Trust project-local files (`.pi`, project `.claude/skills`) for this run
+    /// (pi `--approve`). Needed to load per-project skills in RPC mode.
+    var approveProjectTrust: Bool = false
     /// Extra environment variables merged over the process environment.
     var extraEnvironment: [String: String] = [:]
 
     func buildArguments() -> [String] {
         var args: [String] = []
-        if let interpreterURL { args.append(interpreterURL.path); _ = interpreterURL }
-        // When running via interpreter, the script path is the executable.
+        // When running via interpreter, the script path is the first argument.
         if interpreterURL != nil { args.append(executableURL.path) }
         args.append(contentsOf: ["--mode", "rpc"])
         if noSession { args.append("--no-session") }
@@ -66,6 +70,8 @@ nonisolated struct PiLaunchConfig: Sendable {
         if let provider { args.append(contentsOf: ["--provider", provider]) }
         if let model { args.append(contentsOf: ["--model", model]) }
         if let sessionName { args.append(contentsOf: ["--name", sessionName]) }
+        if approveProjectTrust { args.append("--approve") }
+        for skill in skillPaths { args.append(contentsOf: ["--skill", skill]) }
         return args
     }
 }

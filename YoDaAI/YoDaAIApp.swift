@@ -292,6 +292,8 @@ struct AppSettingsView: View {
                     AppearanceSettingsView()
                 case .apiKeys:
                     APIKeysSettingsView()
+                case .skills:
+                    SkillsSettingsView()
                 case .mcpServers:
                     MCPServersSettingsView()
                 case .permissions:
@@ -334,6 +336,13 @@ struct SettingsTabBar: View {
                 title: "API Keys"
             )
             
+            SettingsTabButton(
+                tab: .skills,
+                selectedTab: $selectedTab,
+                icon: "wand.and.stars",
+                title: "Skills"
+            )
+
             SettingsTabButton(
                 tab: .mcpServers,
                 selectedTab: $selectedTab,

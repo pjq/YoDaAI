@@ -9,6 +9,7 @@ final class SettingsRouter: ObservableObject {
         case general
         case appearance
         case apiKeys
+        case skills
         case mcpServers
         case permissions
         case importExport

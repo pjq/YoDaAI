@@ -67,6 +67,12 @@ final class PiChatEngine {
         // (e.g. the SAP AI Core proxy already configured in ~/.pi).
         config.noSession = false
 
+        // Load skills from ~/.claude/skills, ~/.agents/skills, and the project's
+        // .claude/skills (the last requires project trust in RPC mode).
+        let skills = PiSkillsConfig.skillPaths(for: workingDirectory)
+        config.skillPaths = skills.paths
+        config.approveProjectTrust = skills.needsApprove
+
         let bridge = PiAgentBridge(config: config)
         try await bridge.start()
         bridges[key] = bridge
@@ -170,6 +176,55 @@ final class PiChatEngine {
         // Stream ended without agent_end (process died): flush what we have.
         flush(force: true)
         callbacks.save()
+    }
+
+    // MARK: - Command / skill discovery
+
+    /// A command pi discovered (extension, prompt template, or skill).
+    struct DiscoveredCommand: Identifiable, Sendable {
+        let id = UUID()
+        let name: String
+        let description: String
+        let source: String   // "extension" | "prompt" | "skill"
+        let path: String?
+    }
+
+    /// Query pi for the commands/skills available in a working directory. Uses
+    /// the live per-project bridge if one exists, otherwise a short-lived one.
+    func discoverCommands(workingDirectory: URL, provider: LLMProvider) async -> [DiscoveredCommand] {
+        let bridge: PiAgentBridge
+        let isTemporary: Bool
+        if let existing = bridges[workingDirectory.path] {
+            bridge = existing
+            isTemporary = false
+        } else {
+            guard let resolved = PiExecutable.resolve() else { return [] }
+            var config = PiLaunchConfig(
+                executableURL: resolved.executable,
+                interpreterURL: resolved.interpreter,
+                workingDirectory: workingDirectory)
+            config.noSession = true
+            let skills = PiSkillsConfig.skillPaths(for: workingDirectory)
+            config.skillPaths = skills.paths
+            config.approveProjectTrust = skills.needsApprove
+            bridge = PiAgentBridge(config: config)
+            do { try await bridge.start() } catch { return [] }
+            isTemporary = true
+        }
+        defer { if isTemporary { Task { await bridge.stop() } } }
+
+        guard let response = try? await bridge.request({ id in .getCommands(id: id) }),
+              case .response(_, _, let success, _, let data) = response, success,
+              let commands = data?["commands"]?.arrayValue else {
+            return []
+        }
+        return commands.map { cmd in
+            DiscoveredCommand(
+                name: cmd["name"]?.stringValue ?? "",
+                description: cmd["description"]?.stringValue ?? "",
+                source: cmd["source"]?.stringValue ?? "",
+                path: cmd["sourceInfo"]?["path"]?.stringValue ?? cmd["path"]?.stringValue)
+        }
     }
 
     /// Extract a text preview from a tool result content array.
