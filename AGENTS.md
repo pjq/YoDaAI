@@ -4,9 +4,18 @@ This document provides AI agents with the necessary context to understand and co
 
 ## Project Overview
 
-**YoDaAI** is a macOS SwiftUI chat application that connects to OpenAI-compatible LLM providers. It features:
+**YoDaAI** is a macOS SwiftUI app that works two ways: a **chat client** for any
+OpenAI-compatible LLM, and a **Codex-style coding agent** powered by the
+[pi agent harness](https://pi.dev). It features:
 
 - Multi-threaded chat conversations with persistent storage
+- **Two agent backends** (feature-flagged via `LLMSettings.usePiAgent`):
+  - **Direct client** — `OpenAICompatibleClient` over HTTP (the original path)
+  - **pi agent** — a bundled pi process driven over RPC, owning the agentic loop
+    (file/edit/bash tools, Skills), scoped to a Project working directory
+- **Projects** — directory-scoped chats; the pi agent runs with that cwd
+- **Skills** — pi auto-discovers Agent Skills from `~/.claude/skills`, `~/.agents/skills`,
+  Claude Code plugin marketplaces, and per-project `.claude/skills`
 - Multiple LLM provider management with auto-fetch models from `/v1/models`
 - Accessibility-based "chat with any app" context capture
 - Per-app permissions for context capture and text insertion
@@ -18,7 +27,8 @@ This document provides AI agents with the necessary context to understand and co
 - **Language**: Swift 5 with Swift 6 concurrency (`@MainActor`, `nonisolated`, `Sendable`)
 - **UI Framework**: SwiftUI (macOS 26.1+)
 - **Data Persistence**: SwiftData
-- **Networking**: URLSession with async/await
+- **Networking**: URLSession with async/await (direct client); child-process stdin/stdout JSONL (pi)
+- **Agent harness**: [pi](https://pi.dev) — bundled self-contained binary (`bun build --compile`), driven via `pi --mode rpc`
 - **Accessibility**: macOS Accessibility APIs (AXUIElement)
 - **Markdown Rendering**: Textual SDK (syntax highlighting, code blocks)
 - **Build System**: Xcode project (`.xcodeproj`)
@@ -62,23 +72,33 @@ YoDaAI/
 │   │       ├── ImportExportSettingsView.swift
 │   │       ├── MCPServersSettingsView.swift
 │   │       ├── MCPSharedComponents.swift
+│   │       ├── SkillsSettingsView.swift    # pi skill discovery (read-only list)
 │   │       └── PermissionsSettingsView.swift
+│   │
+│   ├── Pi/                             # pi agent integration
+│   │   ├── PiProtocol.swift           # Swift Codable model of pi's RPC protocol
+│   │   ├── PiAgentBridge.swift        # Spawn `pi --mode rpc`, JSONL framing, events
+│   │   ├── PiChatEngine.swift         # Mirror pi events → ChatMessage + tool UI
+│   │   ├── PiExecutable.swift         # Locate pi; scratch dir; login-shell env
+│   │   ├── PiSkillsConfig.swift       # Resolve skill directories to load
+│   │   └── ApprovalSheet.swift        # Native sheet for extension_ui_request dialogs
 │   │
 │   ├── Views/Components/               # Shared UI components
 │   │   └── StatusBadge.swift
 │   │
-│   ├── OpenAICompatibleClient.swift  # API client for LLM providers
+│   ├── OpenAICompatibleClient.swift  # Direct API client for LLM providers
 │   ├── AccessibilityService.swift    # macOS accessibility integration
 │   ├── AppPermissionsStore.swift     # Per-app permission management
 │   ├── DataExporter.swift           # Import/export all data as JSON
-│   ├── LLMSettings.swift            # App settings (UserDefaults-backed singleton)
+│   ├── LLMSettings.swift            # App settings incl. usePiAgent flag
 │   ├── UpdateChecker.swift          # GitHub release update checker
-│   ├── MCPToolRegistry.swift        # MCP tool discovery and execution
-│   ├── Item.swift             # ChatThread, ChatMessage models
+│   ├── MCPToolRegistry.swift        # MCP tool discovery/execution (direct path)
+│   ├── Item.swift             # ChatThread, ChatMessage models (+ project/piSessionPath)
+│   ├── Project.swift          # Project model (working-directory scoping)
 │   ├── LLMProvider.swift      # LLM provider model
 │   ├── AppPermissionRule.swift       # Per-app permission model
 │   ├── ProviderSettings.swift        # Legacy settings (for migration)
-│   ├── YoDaAI.entitlements    # App sandbox entitlements
+│   ├── YoDaAI.entitlements    # Entitlements (app-sandbox = false)
 │   └── Assets.xcassets/       # App icons and colors
 ├── YoDaAITests/               # Unit tests
 ├── YoDaAIUITests/             # UI tests
@@ -476,10 +496,13 @@ See [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for detailed documentatio
 ### SwiftData Schema
 
 The app uses SwiftData with these models registered in `YoDaAIApp.swift`:
-- `ChatThread` - Has cascade delete relationship with `ChatMessage`
+- `ChatThread` - Cascade delete with `ChatMessage`; optional `project` + `piSessionPath`
 - `ChatMessage` - Belongs to `ChatThread`
 - `LLMProvider` - Stores provider configs (one marked as default)
 - `AppPermissionRule` - Per-app permissions
+- `ImageAttachment`, `AppContextAttachment` - Message attachments
+- `MCPServer` - MCP server configs (direct-client path)
+- `Project` - Working-directory scoping for pi chats (has `threads`)
 - `ProviderSettings` - Legacy (kept for migration)
 
 ### Message Flow
@@ -488,9 +511,57 @@ The app uses SwiftData with these models registered in `YoDaAIApp.swift`:
 2. `ChatViewModel.send()` is called
 3. Creates `ChatMessage` (user role) in SwiftData
 4. Optionally captures `AppContextSnapshot` via `AccessibilityService`
-5. Calls `OpenAICompatibleClient.createChatCompletion()`
-6. Creates `ChatMessage` (assistant role) with response
+5. `sendAssistantResponse()` branches on `LLMSettings.usePiAgent`:
+   - **off** → builds history, calls `OpenAICompatibleClient.createChatCompletionStream()`,
+     runs the Swift tool loop (`executeToolCallsIfNeeded`)
+   - **on** → `generateViaPi()` → `PiChatEngine` (see below)
+6. Streams into the assistant `ChatMessage` (content mutated in place)
 7. Auto-generates thread title if first message
+
+### pi Agent Integration
+
+When `usePiAgent` is on, the turn is delegated to a bundled [pi](https://pi.dev)
+process instead of the direct HTTP client. pi owns the agentic loop, tools, and
+Skills; YoDaAI is the SwiftUI shell.
+
+- **`PiAgentBridge`** (actor): spawns `pi --mode rpc` with the project directory as
+  cwd. Writes JSON commands + `\n` to stdin; reads JSONL events from stdout.
+  **Frame on `\n` only** (not U+2028/2029, which are valid in JSON strings).
+  Exposes `AsyncStream<PiInbound>` for events and id-correlated `request()` for
+  responses. **stdin must stay open** — pi exits on stdin EOF.
+- **`PiProtocol`**: Swift `Codable` model of pi's RPC protocol, ported from
+  `../pi/packages/coding-agent/src/modes/rpc/rpc-types.ts`. All types are
+  `nonisolated` (the project defaults types to `@MainActor`; the bridge actor
+  encodes/decodes off the main actor).
+- **`PiChatEngine`** (`@MainActor`): one bridge per project working directory
+  (cached). `generate()` sends a `prompt` and mirrors `text_delta` →
+  `ChatMessage.content`, and `tool_execution_*` → the existing `ToolExecutionState`
+  card UI. `discoverCommands()` calls `get_commands` for the Skills tab.
+- **`PiExecutable`**: locates the pi binary — bundled `Contents/Resources/pi/pi`
+  first, else dev `../pi/.../dist/cli.js` via `node`, else `pi` on `PATH`. Also
+  provides the **login-shell environment** (GUI apps don't inherit `~/.zshrc`, so
+  pi's `$OPENAI_API_KEY`-style config would fail) and the **scratch directory**
+  for loose chats.
+- **`PiSkillsConfig`**: resolves skill dirs — `~/.claude/skills`, `~/.agents/skills`,
+  every `~/.claude/plugins/marketplaces/*/skills`, and per-project `.claude/skills`
+  (the last needs `--approve` for project trust in RPC mode). Passed via repeatable
+  `--skill <path>`.
+- **`ApprovalSheet`**: pi `extension_ui_request` dialogs (`select`/`confirm`/
+  `input`/`editor`) surface as a native sheet; the reply is sent back with the
+  matching id.
+
+**Working directory safety**: project chats run in the chosen project dir; loose
+(no-project) chats run in `~/Library/Application Support/YoDaAI/chat-scratch`,
+**not** the home folder, so pi can't touch the whole home dir by default.
+
+**Bundling**: the self-contained pi binary is built by
+`../pi/scripts/build-binaries.sh` (`bun build --compile --target=bun-darwin-arm64`)
+and copied into `Contents/Resources/pi/` by `release.sh`'s `bundle_pi()` before
+code-signing. No Node runtime is needed at runtime.
+
+**App Sandbox is OFF** (`ENABLE_APP_SANDBOX = NO` in the pbxproj, matching the
+entitlements file) because the sandbox forbids spawning the pi child process.
+Distribution is via GitHub DMG, not the Mac App Store.
 
 **Performance**: All `context.save()` operations are wrapped in `Task.detached` to run on background threads, preventing UI freezing when saving messages. The ChatViewModel is marked `@MainActor`, so explicit background threading is required for database operations.
 
