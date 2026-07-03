@@ -138,6 +138,7 @@ struct YoDaAIApp: App {
             ImageAttachment.self,
             AppContextAttachment.self,
             MCPServer.self,
+            Project.self,
         ])
         // Use an explicit store URL so both sandboxed and non-sandboxed builds
         // share the same database. When sandboxed (installed app), Application Support

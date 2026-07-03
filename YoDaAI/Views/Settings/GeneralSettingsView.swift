@@ -40,6 +40,13 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Agent Backend") {
+                Toggle("Use pi agent (experimental)", isOn: $llmSettings.usePiAgent)
+                Text("Route chat through the bundled pi agent (owns the tool loop, MCP, and skills). When off, YoDaAI uses the direct OpenAI-compatible client.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("LLM Settings") {
                 // Temperature slider
                 VStack(alignment: .leading, spacing: 4) {

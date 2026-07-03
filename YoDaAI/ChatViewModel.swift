@@ -542,6 +542,16 @@ final class ChatViewModel: ObservableObject {
             history = history.filter { $0.createdAt < cutoff }
         }
 
+        // ---- pi agent path (feature-flagged) ----------------------------------
+        // When enabled, delegate the whole turn to the bundled pi agent, which
+        // owns the tool loop, MCP, and skills. We just create the assistant
+        // placeholder and mirror pi's event stream into it.
+        if settings.usePiAgent {
+            try await generateViaPi(for: thread, provider: provider, history: history, in: context)
+            return
+        }
+        // -----------------------------------------------------------------------
+
         // Build message history with image support
         var requestMessages: [OpenAIChatMessage] = []
         
@@ -849,7 +859,87 @@ final class ChatViewModel: ObservableObject {
         // Clear streaming indicator after everything is done
         streamingMessageID = nil
     }
-    
+
+    // MARK: - pi Agent Path
+
+    /// Generate the assistant response via the bundled pi agent (RPC). Mirrors
+    /// pi's streamed events into a placeholder assistant ChatMessage and the
+    /// existing tool-execution UI. pi owns the tool loop / MCP / skills.
+    private func generateViaPi(
+        for thread: ChatThread,
+        provider: LLMProvider,
+        history: [ChatMessage],
+        in context: ModelContext
+    ) async throws {
+        // Latest user message becomes the prompt pi processes.
+        let latestUserText = history.last(where: { $0.role == .user })?.content ?? ""
+
+        // Assistant placeholder (same pattern as the OpenAI path).
+        let assistantMessage = ChatMessage(role: .assistant, content: "", thread: thread, attachments: [], appContexts: [])
+        context.insert(assistantMessage)
+        Task { try? context.save() }
+        streamingMessageID = assistantMessage.id
+        defer { streamingMessageID = nil }
+
+        // Working directory: the thread's project dir if set, else home.
+        let workingDirectory: URL
+        if let dir = thread.project?.workingDirectory, !dir.isEmpty {
+            workingDirectory = URL(fileURLWithPath: dir)
+        } else {
+            workingDirectory = FileManager.default.homeDirectoryForCurrentUser
+        }
+
+        let msgID = assistantMessage.id
+        let callbacks = PiChatCallbacks(
+            appendText: { [weak self] delta in
+                guard let self else { return }
+                assistantMessage.content += delta
+                _ = msgID
+            },
+            appendThinking: { _ in
+                // Thinking blocks are not yet surfaced in the UI (future: collapsed view).
+            },
+            setToolState: { [weak self] state in
+                guard let self else { return }
+                self.toolExecutionState = state
+                self.toolExecutionMessageID = (state == nil) ? nil : msgID
+            },
+            save: {
+                Task { try? context.save() }
+            },
+            handleUIRequest: { [weak self] req in
+                await self?.handlePiUIRequest(req)
+            }
+        )
+
+        try await PiChatEngine.shared.generate(
+            prompt: latestUserText,
+            images: [],
+            workingDirectory: workingDirectory,
+            provider: provider,
+            callbacks: callbacks)
+    }
+
+    /// Handle an extension UI dialog request from pi (approval, input, etc.).
+    /// Phase 5 wires this to a real SwiftUI sheet; for now auto-confirm/allow so
+    /// coding turns aren't blocked during bring-up.
+    private func handlePiUIRequest(_ req: PiExtensionUIRequest) async -> PiExtensionUIResponse? {
+        switch req.method {
+        case "confirm":
+            return .confirm(true, id: req.id)
+        case "select":
+            // Prefer an "Allow"/first option.
+            if let opts = req.options, let allow = opts.first(where: { $0.lowercased().contains("allow") }) ?? opts.first {
+                return .value(allow, id: req.id)
+            }
+            return .cancel(id: req.id)
+        case "input", "editor":
+            return .value("", id: req.id)
+        default:
+            return .cancel(id: req.id)
+        }
+    }
+
     // MARK: - MCP Tool Execution
     
     /// Execute tool calls from assistant response and continue conversation

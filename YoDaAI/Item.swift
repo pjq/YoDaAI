@@ -17,11 +17,21 @@ final class ChatThread {
     @Relationship(deleteRule: .cascade, inverse: \ChatMessage.thread)
     var messages: [ChatMessage]
 
-    init(id: UUID = UUID(), title: String = "New Chat", createdAt: Date = Date(), messages: [ChatMessage] = []) {
+    /// Optional owning project (scopes the pi working directory). nil => loose chat.
+    var project: Project?
+
+    /// Path to the pi .jsonl session backing this thread, if any (pi is the
+    /// source of truth for agent history; this links a thread to its session).
+    var piSessionPath: String?
+
+    init(id: UUID = UUID(), title: String = "New Chat", createdAt: Date = Date(), messages: [ChatMessage] = [],
+         project: Project? = nil, piSessionPath: String? = nil) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
         self.messages = messages
+        self.project = project
+        self.piSessionPath = piSessionPath
     }
 }
 
