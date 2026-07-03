@@ -76,7 +76,13 @@ final class PiChatEngine {
         config.approveProjectTrust = skills.needsApprove
 
         let bridge = PiAgentBridge(config: config)
-        try await bridge.start()
+        do {
+            try await bridge.start()
+        } catch {
+            DiagnosticLogger.shared.log("pi bridge failed to start: \(error.localizedDescription)", level: .error, category: "Pi")
+            throw error
+        }
+        DiagnosticLogger.shared.log("pi bridge started (cwd=\(workingDirectory.path), skills=\(config.skillPaths.count))", level: .info, category: "Pi")
         bridges[key] = bridge
         return bridge
     }

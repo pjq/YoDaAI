@@ -549,10 +549,13 @@ final class ChatViewModel: ObservableObject {
         // When enabled, delegate the whole turn to the bundled pi agent, which
         // owns the tool loop, MCP, and skills. We just create the assistant
         // placeholder and mirror pi's event stream into it.
+        logger.log("usePiAgent flag = \(settings.usePiAgent)", level: .info, category: "Pi")
         if settings.usePiAgent {
+            logger.log("Routing turn through pi agent path", level: .info, category: "Pi")
             try await generateViaPi(for: thread, provider: provider, history: history, in: context)
             return
         }
+        logger.log("Using legacy OpenAI-compatible client path", level: .info, category: "Pi")
         // -----------------------------------------------------------------------
 
         // Build message history with image support
@@ -891,6 +894,15 @@ final class ChatViewModel: ObservableObject {
         } else {
             workingDirectory = FileManager.default.homeDirectoryForCurrentUser
         }
+
+        let logger = DiagnosticLogger.shared
+        if let resolved = PiExecutable.resolve() {
+            logger.log("pi executable: \(resolved.executable.path) interpreter: \(resolved.interpreter?.path ?? "none")", level: .info, category: "Pi")
+        } else {
+            logger.log("pi executable NOT found (checked bundle Resources/pi/pi, dev cli.js, PATH)", level: .error, category: "Pi")
+        }
+        logger.log("pi working directory: \(workingDirectory.path)", level: .info, category: "Pi")
+        logger.log("pi prompt (first 80): \(String(latestUserText.prefix(80)))", level: .info, category: "Pi")
 
         let msgID = assistantMessage.id
         let callbacks = PiChatCallbacks(

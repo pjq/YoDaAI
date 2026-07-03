@@ -256,6 +256,10 @@ actor PiAgentBridge {
     private func handleTermination(code: Int32) {
         guard isRunning else { return }
         isRunning = false
+        if code != 0 {
+            let tail = String(stderrText.suffix(500))
+            DiagnosticLogger.shared.log("pi process exited (code \(code)). stderr tail: \(tail)", level: .error, category: "Pi")
+        }
         eventContinuation?.finish()
         for (_, cont) in pending { cont.resume(throwing: PiBridgeError.processTerminated(code: code)) }
         pending.removeAll()
