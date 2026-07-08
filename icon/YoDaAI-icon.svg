@@ -63,18 +63,18 @@
   <!-- Glowing Y -->
   <g>
     <!-- wide soft blue halo -->
-    <path d="M 512 530 L 512 670 M 512 530 L 390 370 M 512 530 L 634 370"
+    <path d="M 512 540 L 512 720 M 512 540 L 340 300 M 512 540 L 684 300"
           fill="none" stroke="#38bdf8" stroke-opacity="0.5"
-          stroke-width="50" stroke-linecap="round" stroke-linejoin="round"
+          stroke-width="54" stroke-linecap="round" stroke-linejoin="round"
           filter="url(#glow)"/>
     <!-- main Y stroke -->
-    <path d="M 512 530 L 512 670 M 512 530 L 390 370 M 512 530 L 634 370"
+    <path d="M 512 540 L 512 720 M 512 540 L 340 300 M 512 540 L 684 300"
           fill="none" stroke="url(#yGrad)"
-          stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+          stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
     <!-- bright white inner core -->
-    <path d="M 512 530 L 512 670 M 512 530 L 390 370 M 512 530 L 634 370"
+    <path d="M 512 540 L 512 720 M 512 540 L 340 300 M 512 540 L 684 300"
           fill="none" stroke="#ffffff" stroke-opacity="0.85"
-          stroke-width="14" stroke-linecap="round" stroke-linejoin="round"
+          stroke-width="16" stroke-linecap="round" stroke-linejoin="round"
           filter="url(#coreGlow)"/>
   </g>
 </svg>
