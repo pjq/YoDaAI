@@ -129,7 +129,7 @@ struct SlashCommandPickerPopover: View {
             // Command list
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    if viewModel.filteredSlashCommands.isEmpty {
+                    if viewModel.filteredSlashCommands.isEmpty && viewModel.filteredSkills.isEmpty {
                         Text("No matching commands")
                             .font(.system(size: 11 * scaleManager.scale))
                             .foregroundStyle(.secondary)
@@ -161,16 +161,60 @@ struct SlashCommandPickerPopover: View {
                             .buttonStyle(.plain)
                             .background(Color.primary.opacity(0.001)) // For hover
                         }
+
+                        // Skills section (pi chats)
+                        if !viewModel.filteredSkills.isEmpty {
+                            Text("Skills")
+                                .font(.system(size: 11 * scaleManager.scale, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 8).padding(.bottom, 2)
+                            ForEach(viewModel.filteredSkills) { skill in
+                                Button {
+                                    selectSkill(skill)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "wand.and.stars")
+                                            .frame(width: 20, height: 20)
+                                            .foregroundStyle(.purple)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("/\(skill.invocation)")
+                                                .font(.system(size: 14 * scaleManager.scale, weight: .medium))
+                                            if !skill.description.isEmpty {
+                                                Text(skill.description)
+                                                    .font(.system(size: 10 * scaleManager.scale))
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(2)
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                    .contentShape(Rectangle())
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                }
+                                .buttonStyle(.plain)
+                                .background(Color.primary.opacity(0.001))
+                            }
+                        }
                     }
                 }
             }
-            .frame(maxHeight: 300)
+            .frame(maxHeight: 320)
         }
         .frame(width: 320)
     }
 
     private func selectCommand(_ command: SlashCommand) {
         viewModel.composerText = command.displayName
+        dismiss()
+    }
+
+    /// Put the skill invocation in the composer. pi expands "/skill:name" when the
+    /// prompt is sent, so the user can add args after it or just press send.
+    private func selectSkill(_ skill: PiChatEngine.DiscoveredCommand) {
+        viewModel.composerText = "/\(skill.invocation) "
+        viewModel.showSlashCommandPicker = false
         dismiss()
     }
 }

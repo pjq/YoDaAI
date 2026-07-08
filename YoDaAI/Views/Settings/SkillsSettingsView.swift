@@ -141,12 +141,8 @@ struct SkillsSettingsView: View {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
-        guard let provider = defaultProvider else {
-            errorMessage = "Configure an LLM provider first."
-            return
-        }
         let scratch = PiExecutable.scratchDirectory()
-        let all = await PiChatEngine.shared.discoverCommands(workingDirectory: scratch, provider: provider)
+        let all = await PiChatEngine.shared.discoverCommands(workingDirectory: scratch)
         skills = all.filter { $0.source == "skill" }
         if all.isEmpty {
             errorMessage = "Could not reach the pi agent. Build it (../pi: npm run build) or bundle the binary."

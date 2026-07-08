@@ -201,11 +201,17 @@ final class PiChatEngine {
         let description: String
         let source: String   // "extension" | "prompt" | "skill"
         let path: String?
+
+        /// The slash invocation (without leading "/"). pi already returns skill
+        /// names prefixed with "skill:", so we don't double it.
+        var invocation: String {
+            name.hasPrefix("skill:") ? name : (source == "skill" ? "skill:\(name)" : name)
+        }
     }
 
     /// Query pi for the commands/skills available in a working directory. Uses
     /// the live per-project bridge if one exists, otherwise a short-lived one.
-    func discoverCommands(workingDirectory: URL, provider: LLMProvider) async -> [DiscoveredCommand] {
+    func discoverCommands(workingDirectory: URL) async -> [DiscoveredCommand] {
         let bridge: PiAgentBridge
         let isTemporary: Bool
         if let existing = bridges[workingDirectory.path] {

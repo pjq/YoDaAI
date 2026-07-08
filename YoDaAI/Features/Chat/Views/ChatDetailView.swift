@@ -73,6 +73,13 @@ struct ChatDetailView: View {
         }
         .onAppear {
             setupCommandHandlers()
+            Task { await viewModel.loadSkills(for: thread) }
+        }
+        .onChange(of: thread?.id) { _, _ in
+            Task { await viewModel.loadSkills(for: thread) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clearChat)) { _ in
+            if let thread { clearMessages(in: thread) }
         }
     }
 

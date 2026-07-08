@@ -208,6 +208,12 @@ struct YoDaAIApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(appState.isSending) // Disable during API calls
+
+                Button("Clear Chat") {
+                    NotificationCenter.default.post(name: .clearChat, object: nil)
+                }
+                .keyboardShortcut("l", modifiers: .command)
+                .disabled(appState.isSending)
             }
             
             // View menu with zoom commands
@@ -245,6 +251,7 @@ struct YoDaAIApp: App {
 // MARK: - Notification names
 extension Notification.Name {
     static let createNewChat = Notification.Name("createNewChat")
+    static let clearChat      = Notification.Name("clearChat")
     static let focusComposer  = Notification.Name("focusComposer")
 }
 

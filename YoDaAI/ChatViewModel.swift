@@ -1426,14 +1426,43 @@ final class ChatViewModel: ObservableObject {
     /// Filtered slash commands based on current input
     @Published var filteredSlashCommands: [SlashCommand] = []
 
+    /// pi skills available for manual invocation via /skill:name (pi mode only).
+    @Published var availableSkills: [PiChatEngine.DiscoveredCommand] = []
+    /// Skills filtered by the current slash input.
+    @Published var filteredSkills: [PiChatEngine.DiscoveredCommand] = []
+
+    /// Load pi's skills for the given thread's working directory so they can be
+    /// offered in the slash-command picker. No-op when the thread isn't a pi chat.
+    func loadSkills(for thread: ChatThread?) async {
+        guard let thread, usesPiAgent(for: thread) else {
+            availableSkills = []
+            return
+        }
+        let workingDirectory: URL
+        if let dir = thread.project?.workingDirectory, !dir.isEmpty {
+            workingDirectory = URL(fileURLWithPath: dir)
+        } else {
+            workingDirectory = PiExecutable.scratchDirectory()
+        }
+        let commands = await PiChatEngine.shared.discoverCommands(workingDirectory: workingDirectory)
+        availableSkills = commands.filter { $0.source == "skill" }
+    }
+
     /// Check if text is a slash command and update autocomplete
     func updateSlashCommandAutocomplete() {
         if SlashCommandParser.shouldShowAutocomplete(for: composerText) {
             filteredSlashCommands = SlashCommandParser.filterCommands(for: composerText)
-            showSlashCommandPicker = !filteredSlashCommands.isEmpty
+            // Also filter skills by the text after "/".
+            let query = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+                .dropFirst().lowercased()
+            filteredSkills = query.isEmpty
+                ? availableSkills
+                : availableSkills.filter { $0.invocation.lowercased().contains(query) }
+            showSlashCommandPicker = !filteredSlashCommands.isEmpty || !filteredSkills.isEmpty
         } else {
             showSlashCommandPicker = false
             filteredSlashCommands = []
+            filteredSkills = []
         }
     }
 
