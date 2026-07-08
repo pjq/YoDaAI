@@ -53,14 +53,7 @@
   <rect x="112.5" y="112.5" width="799" height="799" rx="187.5" fill="none"
         stroke="#cbd5e1" stroke-width="2"/>
 
-  <!-- Inner panel (white card) -->
-  <g filter="url(#panelShadow)">
-    <rect x="236" y="236" width="552" height="552" rx="128" fill="url(#panel)"/>
-    <rect x="237" y="237" width="550" height="550" rx="127" fill="none"
-          stroke="#e2e8f0" stroke-width="2"/>
-  </g>
-
-  <!-- Glowing Y -->
+  <!-- Glowing Y (directly on the square, no inner panel) -->
   <g>
     <!-- wide soft blue halo -->
     <path d="M 512 540 L 512 720 M 512 540 L 340 300 M 512 540 L 684 300"
