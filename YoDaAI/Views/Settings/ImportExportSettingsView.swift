@@ -91,7 +91,7 @@ struct ImportExportSettingsView: View {
         Task { @MainActor in
             defer { isExporting = false }
             do {
-                let data = try DataExporter.exportAll(context: modelContext)
+                let data = try await DataExporter.exportAll(context: modelContext)
                 try data.write(to: url, options: .atomic)
                 alertTitle = "Export Successful"
                 alertMessage = "Data exported to \(url.lastPathComponent)"
@@ -136,7 +136,7 @@ struct ImportExportSettingsView: View {
             defer { isImporting = false }
             do {
                 let data = try Data(contentsOf: url)
-                try DataExporter.importAll(from: data, context: modelContext)
+                try await DataExporter.importAll(from: data, context: modelContext)
                 alertTitle = "Import Successful"
                 alertMessage = "All data has been restored. You may need to restart the app for all changes to take effect."
                 showAlert = true

@@ -84,6 +84,20 @@ final class ImageStorageService {
         }.value
     }
 
+    /// Write image bytes to a SPECIFIC filename (used by import/restore to
+    /// recreate a file whose path is already referenced by an ImageAttachment).
+    nonisolated func writeImage(data: Data, fileName: String) async throws {
+        try await Task.detached {
+            let storageDir = try self.getImageStorageDirectory()
+            let fileURL = storageDir.appendingPathComponent(fileName)
+            do {
+                try data.write(to: fileURL, options: .atomic)
+            } catch {
+                throw ImageStorageError.storageError(error)
+            }
+        }.value
+    }
+
     /// Load image data from disk
     nonisolated func loadImage(filePath: String) async throws -> Data {
         return try await Task.detached {

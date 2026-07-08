@@ -8,10 +8,20 @@ struct ExportBundle: Codable {
     let exportDate: Date
     let appVersion: String
     let threads: [ThreadExport]
+    let projects: [ProjectExport]?          // added in v2; optional for v1 imports
     let providers: [ProviderExport]
     let mcpServers: [MCPServerExport]
     let permissions: [PermissionExport]
     let settings: SettingsExport
+}
+
+// MARK: - Project DTO
+
+struct ProjectExport: Codable {
+    let id: UUID
+    let name: String
+    let workingDirectory: String
+    let createdAt: Date
 }
 
 // MARK: - Thread & Message DTOs
@@ -20,6 +30,8 @@ struct ThreadExport: Codable {
     let id: UUID
     let title: String
     let createdAt: Date
+    let projectID: UUID?                    // link to owning project (v2)
+    let piSessionPath: String?              // pi session backing this thread (v2)
     let messages: [MessageExport]
 }
 
@@ -29,6 +41,21 @@ struct MessageExport: Codable {
     let roleRawValue: String
     let content: String
     let appContexts: [AppContextExport]
+    let images: [ImageExport]?             // image attachments w/ file bytes (v2)
+}
+
+// MARK: - Image Attachment DTO
+
+struct ImageExport: Codable {
+    let id: UUID
+    let createdAt: Date
+    let fileName: String
+    let filePath: String
+    let mimeType: String
+    let fileSize: Int
+    let width: Int?
+    let height: Int?
+    let dataBase64: String?                // file bytes; nil if the file was missing
 }
 
 struct AppContextExport: Codable {
@@ -97,6 +124,7 @@ struct SettingsExport: Codable {
     let showTimestamps: Bool
     let mcpEnabled: Bool
     let textScale: Double
+    let usePiAgent: Bool?                   // added in v2; optional for v1 imports
 }
 
 // MARK: - Data Exporter
@@ -104,17 +132,24 @@ struct SettingsExport: Codable {
 @MainActor
 enum DataExporter {
 
-    static func exportAll(context: ModelContext) throws -> Data {
+    static func exportAll(context: ModelContext) async throws -> Data {
         // Fetch all models
         let threads = try context.fetch(FetchDescriptor<ChatThread>(sortBy: [SortDescriptor(\.createdAt)]))
+        let projects = try context.fetch(FetchDescriptor<Project>(sortBy: [SortDescriptor(\.createdAt)]))
         let providers = try context.fetch(FetchDescriptor<LLMProvider>(sortBy: [SortDescriptor(\.createdAt)]))
         let mcpServers = try context.fetch(FetchDescriptor<MCPServer>(sortBy: [SortDescriptor(\.createdAt)]))
         let permissions = try context.fetch(FetchDescriptor<AppPermissionRule>(sortBy: [SortDescriptor(\.createdAt)]))
 
-        // Map to DTOs
-        let threadExports = threads.map { thread in
+        let projectExports = projects.map { p in
+            ProjectExport(id: p.id, name: p.name, workingDirectory: p.workingDirectory, createdAt: p.createdAt)
+        }
+
+        // Map to DTOs (async: image bytes are read from disk)
+        var threadExports: [ThreadExport] = []
+        for thread in threads {
             let sortedMessages = thread.messages.sorted { $0.createdAt < $1.createdAt }
-            let messageExports = sortedMessages.map { msg in
+            var messageExports: [MessageExport] = []
+            for msg in sortedMessages {
                 let contextExports = msg.appContexts.map { ctx in
                     AppContextExport(
                         id: ctx.id, createdAt: ctx.createdAt,
@@ -123,13 +158,28 @@ enum DataExporter {
                         focusedRole: ctx.focusedRole, isSecureField: ctx.isSecureField
                     )
                 }
-                return MessageExport(
+                var imageExports: [ImageExport] = []
+                for img in msg.attachments {
+                    // Read the file bytes so images survive export/import. If the
+                    // file is missing, still export the metadata with nil data.
+                    let base64 = try? await ImageStorageService.shared.loadImage(filePath: img.filePath).base64EncodedString()
+                    imageExports.append(ImageExport(
+                        id: img.id, createdAt: img.createdAt,
+                        fileName: img.fileName, filePath: img.filePath,
+                        mimeType: img.mimeType, fileSize: img.fileSize,
+                        width: img.width, height: img.height,
+                        dataBase64: base64))
+                }
+                messageExports.append(MessageExport(
                     id: msg.id, createdAt: msg.createdAt,
                     roleRawValue: msg.roleRawValue, content: msg.content,
-                    appContexts: contextExports
-                )
+                    appContexts: contextExports,
+                    images: imageExports.isEmpty ? nil : imageExports))
             }
-            return ThreadExport(id: thread.id, title: thread.title, createdAt: thread.createdAt, messages: messageExports)
+            threadExports.append(ThreadExport(
+                id: thread.id, title: thread.title, createdAt: thread.createdAt,
+                projectID: thread.project?.id, piSessionPath: thread.piSessionPath,
+                messages: messageExports))
         }
 
         let providerExports = providers.map { p in
@@ -172,16 +222,18 @@ enum DataExporter {
             appearanceMode: ud.integer(forKey: "app_appearanceMode"),
             showTimestamps: ud.object(forKey: "app_showTimestamps") as? Bool ?? false,
             mcpEnabled: ud.object(forKey: "mcp_enabled") as? Bool ?? false,
-            textScale: ud.object(forKey: "app_text_scale") as? Double ?? 1.0
+            textScale: ud.object(forKey: "app_text_scale") as? Double ?? 1.0,
+            usePiAgent: ud.object(forKey: "llm_usePiAgent") as? Bool ?? false
         )
 
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
 
         let bundle = ExportBundle(
-            version: 1,
+            version: 2,
             exportDate: Date(),
             appVersion: appVersion,
             threads: threadExports,
+            projects: projectExports,
             providers: providerExports,
             mcpServers: mcpExports,
             permissions: permExports,
@@ -194,7 +246,7 @@ enum DataExporter {
         return try encoder.encode(bundle)
     }
 
-    static func importAll(from data: Data, context: ModelContext) throws {
+    static func importAll(from data: Data, context: ModelContext) async throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let bundle = try decoder.decode(ExportBundle.self, from: data)
@@ -204,13 +256,26 @@ enum DataExporter {
         try context.delete(model: ChatMessage.self)
         try context.delete(model: ImageAttachment.self)
         try context.delete(model: AppContextAttachment.self)
+        try context.delete(model: Project.self)
         try context.delete(model: LLMProvider.self)
         try context.delete(model: MCPServer.self)
         try context.delete(model: AppPermissionRule.self)
 
-        // Import threads with messages and app contexts
+        // Import projects first so threads can link to them.
+        var projectsByID: [UUID: Project] = [:]
+        for p in bundle.projects ?? [] {
+            let project = Project(id: p.id, name: p.name, workingDirectory: p.workingDirectory, createdAt: p.createdAt)
+            context.insert(project)
+            projectsByID[p.id] = project
+        }
+
+        // Import threads with messages, app contexts, and image attachments.
         for threadExport in bundle.threads {
-            let thread = ChatThread(id: threadExport.id, title: threadExport.title, createdAt: threadExport.createdAt)
+            let thread = ChatThread(
+                id: threadExport.id, title: threadExport.title, createdAt: threadExport.createdAt,
+                project: threadExport.projectID.flatMap { projectsByID[$0] },
+                piSessionPath: threadExport.piSessionPath
+            )
             context.insert(thread)
 
             for msgExport in threadExport.messages {
@@ -230,6 +295,22 @@ enum DataExporter {
                         message: message
                     )
                     context.insert(appCtx)
+                }
+
+                for imgExport in msgExport.images ?? [] {
+                    // Restore the image file bytes to disk (same filename) so the
+                    // filePath reference stays valid.
+                    if let b64 = imgExport.dataBase64, let bytes = Data(base64Encoded: b64) {
+                        try? await ImageStorageService.shared.writeImage(data: bytes, fileName: imgExport.fileName)
+                    }
+                    let img = ImageAttachment(
+                        id: imgExport.id, createdAt: imgExport.createdAt,
+                        fileName: imgExport.fileName, filePath: imgExport.filePath,
+                        mimeType: imgExport.mimeType, fileSize: imgExport.fileSize,
+                        width: imgExport.width, height: imgExport.height,
+                        message: message
+                    )
+                    context.insert(img)
                 }
             }
         }
@@ -286,6 +367,7 @@ enum DataExporter {
         ud.set(settings.showTimestamps, forKey: "app_showTimestamps")
         ud.set(settings.mcpEnabled, forKey: "mcp_enabled")
         ud.set(settings.textScale, forKey: "app_text_scale")
+        ud.set(settings.usePiAgent ?? false, forKey: "llm_usePiAgent")
 
         // Reload LLMSettings singleton from UserDefaults
         let llm = LLMSettings.shared
@@ -298,6 +380,7 @@ enum DataExporter {
         llm.enableMarkdown = settings.enableMarkdown
         llm.appearanceMode = AppearanceMode(rawValue: settings.appearanceMode) ?? .system
         llm.showTimestamps = settings.showTimestamps
+        llm.usePiAgent = settings.usePiAgent ?? false
 
         // Reload text scale
         AppScaleManager.shared.scale = CGFloat(settings.textScale)
