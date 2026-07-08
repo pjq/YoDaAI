@@ -40,18 +40,10 @@ struct ContentView: View {
         return threads.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
     }
 
-    /// Loose chats: those not attached to any project. Project chats are shown
-    /// under their project section instead of the date groups.
+    /// Loose chats: those not attached to any project, newest first. Shown under
+    /// the "Chats" group. Project chats appear under their project section.
     private var looseThreads: [ChatThread] {
         filteredThreads.filter { $0.project == nil }
-    }
-
-    private var todayThreads: [ChatThread] {
-        looseThreads.filter { Calendar.current.isDateInToday($0.createdAt) }
-    }
-
-    private var olderThreads: [ChatThread] {
-        looseThreads.filter { !Calendar.current.isDateInToday($0.createdAt) }
     }
 
     /// Chats belonging to a project, newest first, filtered by search.
@@ -112,23 +104,9 @@ struct ContentView: View {
                     }
                 }
 
-                if !todayThreads.isEmpty {
-                    Section("Today") {
-                        ForEach(todayThreads) { thread in
-                            ThreadRowView(thread: thread)
-                                .tag(thread)
-                                .contextMenu {
-                                    Button("Delete", role: .destructive) {
-                                        deleteThread(thread)
-                                    }
-                                }
-                        }
-                    }
-                }
-
-                if !olderThreads.isEmpty {
-                    Section("Previous") {
-                        ForEach(olderThreads) { thread in
+                if !looseThreads.isEmpty {
+                    Section("Chats") {
+                        ForEach(looseThreads) { thread in
                             ThreadRowView(thread: thread)
                                 .tag(thread)
                                 .contextMenu {
@@ -222,9 +200,10 @@ struct ContentView: View {
     }
 
     private func createNewChat() {
-        // New loose chats inherit the active project when one is selected, so the
-        // "+" toolbar keeps working within the current project context.
-        createNewChat(in: activeProject)
+        // ⌘N / the toolbar "+" always create a loose chat in the "Chats" group
+        // (no project). Use a project's own "New chat" button to create one inside
+        // that project.
+        createNewChat(in: nil)
     }
 
     private func createNewChat(in project: Project?) {
