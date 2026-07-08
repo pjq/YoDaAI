@@ -145,6 +145,13 @@ struct MessageListView: View {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
+                // Messages cleared (header Clear button or /clear) → reload the cache.
+                .onChange(of: viewModel.messagesReloadToken) { _, _ in
+                    updateTask?.cancel()
+                    Task { @MainActor in
+                        displayedMessages = MessageDisplayData.loadMessages(from: thread)
+                    }
+                }
                 .onChange(of: thread.id) { _, _ in
                     updateTask?.cancel()
                     scrollTracker.stopStreamingScroll()

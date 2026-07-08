@@ -154,5 +154,7 @@ struct ChatDetailView: View {
         } catch {
             print("[Chat] Clear failed: \(error)")
         }
+        // Force the message list to reload (it caches messages in @State).
+        viewModel.messagesReloadToken += 1
     }
 }

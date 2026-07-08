@@ -15,6 +15,7 @@ final class ChatViewModel: ObservableObject {
     @Published var lastErrorMessage: String?
     @Published var imageErrorMessage: String?  // Error message for image operations
     @Published var streamingMessageID: UUID?  // Track the message being streamed
+    @Published var messagesReloadToken: Int = 0  // Bump to force the message list to reload (e.g. after Clear)
     @Published var mentionedApps: [RunningApp] = []  // Apps mentioned with @
     @Published var mentionedAppContexts: [String: AppContextSnapshot] = [:] // Cached captured content by bundleIdentifier
     @Published var showMentionPicker: Bool = false  // Show @ mention picker
