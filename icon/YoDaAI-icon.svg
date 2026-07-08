@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Outer square: soft light gray -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#e2e8f0"/>
+    </linearGradient>
+
+    <!-- Inner panel: slightly darker cool white -->
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f1f5f9"/>
+    </linearGradient>
+
+    <!-- The glowing Y: bright electric blue → cyan -->
+    <linearGradient id="yGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.5" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+
+    <!-- Soft blue glow behind Y -->
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="28" result="b1"/>
+      <feMerge>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="b1"/>
+      </feMerge>
+    </filter>
+
+    <!-- Tighter core glow (white center) -->
+    <filter id="coreGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6"/>
+    </filter>
+
+    <!-- Panel subtle shadow -->
+    <filter id="panelShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#94a3b8" flood-opacity="0.25"/>
+    </filter>
+
+    <!-- Outer subtle shadow for depth -->
+    <filter id="outerShadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#64748b" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Outer rounded square (light) -->
+  <g filter="url(#outerShadow)">
+    <rect x="112" y="112" width="800" height="800" rx="188" fill="url(#bg)"/>
+  </g>
+  <!-- subtle border -->
+  <rect x="112.5" y="112.5" width="799" height="799" rx="187.5" fill="none"
+        stroke="#cbd5e1" stroke-width="2"/>
+
+  <!-- Inner panel (white card) -->
+  <g filter="url(#panelShadow)">
+    <rect x="236" y="236" width="552" height="552" rx="128" fill="url(#panel)"/>
+    <rect x="237" y="237" width="550" height="550" rx="127" fill="none"
+          stroke="#e2e8f0" stroke-width="2"/>
+  </g>
+
+  <!-- Glowing Y -->
+  <g>
+    <!-- wide soft blue halo -->
+    <path d="M 512 530 L 512 670 M 512 530 L 390 370 M 512 530 L 634 370"
+          fill="none" stroke="#38bdf8" stroke-opacity="0.5"
+          stroke-width="50" stroke-linecap="round" stroke-linejoin="round"
+          filter="url(#glow)"/>
+    <!-- main Y stroke -->
+    <path d="M 512 530 L 512 670 M 512 530 L 390 370 M 512 530 L 634 370"
+          fill="none" stroke="url(#yGrad)"
+          stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- bright white inner core -->
+    <path d="M 512 530 L 512 670 M 512 530 L 390 370 M 512 530 L 634 370"
+          fill="none" stroke="#ffffff" stroke-opacity="0.85"
+          stroke-width="14" stroke-linecap="round" stroke-linejoin="round"
+          filter="url(#coreGlow)"/>
+  </g>
+</svg>
