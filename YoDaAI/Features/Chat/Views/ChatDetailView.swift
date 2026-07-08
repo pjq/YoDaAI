@@ -24,7 +24,7 @@ struct ChatDetailView: View {
                 ChatHeaderView(
                     thread: thread,
                     modelName: provider?.selectedModel ?? "No model",
-                    onDelete: onDeleteThread
+                    onClear: { clearMessages(in: thread) }
                 )
 
                 Divider()
@@ -87,29 +87,11 @@ struct ChatDetailView: View {
             }
         }
 
-        // Clear command - delete all messages in current thread
+        // Clear command - delete all messages in current thread (reuses the
+        // same logic as the header Clear button).
         viewModel.onClearCommand = {
-            print("[SlashCommand] Clear handler called")
-            guard let thread = thread else {
-                print("[SlashCommand] Clear: thread is nil")
-                return
-            }
-            let messageCount = thread.messages.count
-            print("[SlashCommand] Clear: deleting \(messageCount) messages")
-
-            // Delete all messages
-            let messagesToDelete = Array(thread.messages)
-            for message in messagesToDelete {
-                modelContext.delete(message)
-            }
-
-            // Save changes
-            do {
-                try modelContext.save()
-                print("[SlashCommand] Clear: successfully deleted \(messageCount) messages")
-            } catch {
-                print("[SlashCommand] Clear: error saving: \(error)")
-            }
+            guard let thread = thread else { return }
+            clearMessages(in: thread)
         }
 
         // New command - create new chat
@@ -156,5 +138,21 @@ struct ChatDetailView: View {
         }
 
         print("[SlashCommand] Command handlers setup complete")
+    }
+
+    /// Delete all messages in a thread, keeping the thread itself. Used by the
+    /// header Clear button and the /clear command.
+    private func clearMessages(in thread: ChatThread) {
+        let messagesToDelete = Array(thread.messages)
+        guard !messagesToDelete.isEmpty else { return }
+        for message in messagesToDelete {
+            modelContext.delete(message)
+        }
+        do {
+            try modelContext.save()
+            print("[Chat] Cleared \(messagesToDelete.count) messages from \"\(thread.title)\"")
+        } catch {
+            print("[Chat] Clear failed: \(error)")
+        }
     }
 }

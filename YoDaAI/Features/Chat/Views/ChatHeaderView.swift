@@ -6,9 +6,9 @@ struct ChatHeaderView: View {
     @Environment(\.modelContext) private var modelContext
     let thread: ChatThread
     let modelName: String
-    var onDelete: () -> Void
+    var onClear: () -> Void
 
-    @State private var showDeleteConfirmation = false
+    @State private var showClearConfirmation = false
     @Environment(\.appScaleManager) private var scaleManager
 
     var body: some View {
@@ -30,23 +30,28 @@ struct ChatHeaderView: View {
             Spacer()
 
             Button {
-                showDeleteConfirmation = true
+                if thread.messages.isEmpty {
+                    // Nothing to clear; no need to confirm.
+                    return
+                }
+                showClearConfirmation = true
             } label: {
-                Image(systemName: "trash")
+                Image(systemName: "eraser")
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
-            .help("Delete Chat")
+            .help("Clear Chat")
+            .disabled(thread.messages.isEmpty)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .alert("Delete Chat?", isPresented: $showDeleteConfirmation) {
+        .alert("Clear Chat?", isPresented: $showClearConfirmation) {
             Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                onDelete()
+            Button("Clear", role: .destructive) {
+                onClear()
             }
         } message: {
-            Text("This will permanently delete \"\(thread.title)\" and all its messages.")
+            Text("This will delete all messages in \"\(thread.title)\". The chat itself is kept.")
         }
     }
 }
