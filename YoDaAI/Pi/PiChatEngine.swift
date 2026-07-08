@@ -93,6 +93,19 @@ final class PiChatEngine {
         return bridge
     }
 
+    /// Tell every running pi process to abort its current turn (keeps the
+    /// processes alive for the next message). Called when the user hits Stop, so
+    /// pi doesn't keep processing and reject the next prompt as "already
+    /// processing".
+    func abortActiveTurns() async {
+        for (_, b) in bridges {
+            if await b.turnActive() {
+                try? await b.send(.abort())
+                await b.endTurn()
+            }
+        }
+    }
+
     /// Tear down all bridges (e.g. on app quit or project removal).
     func shutdownAll() async {
         for (_, b) in bridges { await b.stop() }
@@ -115,8 +128,15 @@ final class PiChatEngine {
         // beginTurn/endTurn on the bridge — avoids the multi-turn consumer hang).
         let events = await bridge.beginTurn()
 
-        // Accept the prompt. pi returns a response ack, then streams events.
-        try await bridge.send(.prompt(prompt, images: images.isEmpty ? nil : images))
+        // If pi is still processing a previous turn (e.g. the last turn ended on
+        // our side before pi emitted agent_end), a bare prompt is rejected with
+        // "Agent is already processing". Queue it as a follow-up instead.
+        let piImages = images.isEmpty ? nil : images
+        let alreadyActive = await bridge.turnActive()
+        try await bridge.send(
+            alreadyActive
+                ? .followUp(prompt, images: piImages)
+                : .prompt(prompt, images: piImages))
 
         var textBatch = ""
         var lastFlush = Date()
@@ -182,9 +202,10 @@ final class PiChatEngine {
                 return
 
             case .response(_, let command, let success, let error, _):
-                if !success, command == "prompt", let error {
+                if !success, command == "prompt" || command == "follow_up" || command == "steer" {
+                    let msg = error ?? "The agent could not accept the message."
                     await bridge.endTurn()
-                    throw PiChatError.unavailable(error)
+                    throw PiChatError.unavailable(msg)
                 }
 
             default:

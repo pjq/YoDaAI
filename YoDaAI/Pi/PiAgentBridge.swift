@@ -101,6 +101,11 @@ actor PiAgentBridge {
     /// Captured stderr text for diagnostics.
     private(set) var stderrText: String = ""
 
+    /// True while pi is processing a turn (between agent_start and agent_end).
+    /// A new prompt sent during this window must use streamingBehavior, or pi
+    /// rejects it with "Agent is already processing".
+    private(set) var isTurnActive = false
+
     private var isRunning = false
     private var autoID = 0
 
@@ -251,6 +256,12 @@ actor PiAgentBridge {
             // Not valid JSON / no type — ignore (could be a stray log line).
             return
         }
+        // Track pi's turn lifecycle so callers know whether to steer/follow-up.
+        switch inbound {
+        case .agentStart: isTurnActive = true
+        case .agentEnd: isTurnActive = false
+        default: break
+        }
         if case .response(let id?, _, _, _, _) = inbound, let cont = pending[id] {
             pending[id] = nil
             cont.resume(returning: inbound)
@@ -259,6 +270,9 @@ actor PiAgentBridge {
         // Everything else (events, un-correlated responses) goes to the stream.
         eventContinuation?.yield(inbound)
     }
+
+    /// Whether pi is currently processing a turn.
+    func turnActive() -> Bool { isTurnActive }
 
     private func appendStderr(_ s: String) {
         stderrText += s

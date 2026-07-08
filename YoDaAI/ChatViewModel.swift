@@ -275,6 +275,9 @@ final class ChatViewModel: ObservableObject {
         streamingMessageID = nil  // Clear streaming indicator
         toolExecutionState = nil  // Clear tool execution card
         toolExecutionMessageID = nil
+        // Tell any running pi process to abort its turn, so the next message
+        // isn't rejected with "Agent is already processing".
+        Task { await PiChatEngine.shared.abortActiveTurns() }
     }
     
     /// Start sending with Task tracking for cancellation
