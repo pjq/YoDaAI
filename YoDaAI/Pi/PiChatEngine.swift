@@ -64,6 +64,12 @@ final class PiChatEngine {
             workingDirectory: workingDirectory)
         config.noSession = false
 
+        // Pass the provider/model the UI shows (from PiConfigStore defaults) so the
+        // launched pi matches, and a per-chat model switch is honored on next launch.
+        let cfg = PiConfigStore.shared
+        if !cfg.defaultProvider.isEmpty { config.provider = cfg.defaultProvider }
+        if !cfg.defaultModel.isEmpty { config.model = cfg.defaultModel }
+
         // GUI apps don't inherit the shell environment, so pi's config that
         // references "$OPENAI_API_KEY" etc. would fail with "No API key found".
         // Feed pi the user's login-shell environment.
@@ -258,6 +264,56 @@ final class PiChatEngine {
         let name = model["name"]?.stringValue ?? model["id"]?.stringValue ?? "unknown"
         let prov = model["provider"]?.stringValue
         return prov.map { "\($0) · \(name)" } ?? name
+    }
+
+    /// A pi model the user can pick.
+    struct PiModel: Identifiable, Hashable, Sendable {
+        var id: String { "\(provider)/\(modelId)" }
+        let provider: String
+        let modelId: String
+        let name: String
+    }
+
+    /// List pi's available models via get_available_models (short-lived bridge).
+    func availableModels(workingDirectory: URL) async -> [PiModel] {
+        guard let resolved = PiExecutable.resolve() else { return [] }
+        var config = PiLaunchConfig(
+            executableURL: resolved.executable,
+            interpreterURL: resolved.interpreter,
+            workingDirectory: workingDirectory)
+        config.noSession = true
+        config.extraEnvironment = PiExecutable.loginShellEnvironment
+        let bridge = PiAgentBridge(config: config)
+        do { try await bridge.start() } catch { return [] }
+        defer { Task { await bridge.stop() } }
+
+        guard let response = try? await bridge.request({ id in .getAvailableModels(id: id) }),
+              case .response(_, _, let success, _, let data) = response, success,
+              let models = data?["models"]?.arrayValue else {
+            return []
+        }
+        return models.compactMap { m in
+            guard let id = m["id"]?.stringValue else { return nil }
+            return PiModel(
+                provider: m["provider"]?.stringValue ?? "",
+                modelId: id,
+                name: m["name"]?.stringValue ?? id)
+        }
+    }
+
+    /// Switch the model for a project's live pi process (if running) via set_model,
+    /// and persist the choice to PiConfigStore so it survives restarts.
+    func setModel(_ model: PiModel, workingDirectory: URL) async {
+        if let bridge = bridges[workingDirectory.path] {
+            _ = try? await bridge.request { id in
+                .setModel(provider: model.provider, modelId: model.modelId, id: id)
+            }
+        }
+        // Persist as the pi default so new processes and the pi Agent tab agree.
+        let cfg = PiConfigStore.shared
+        cfg.defaultProvider = model.provider
+        cfg.defaultModel = model.modelId
+        cfg.saveSettings()
     }
 
     /// Extract a text preview from a tool result content array.

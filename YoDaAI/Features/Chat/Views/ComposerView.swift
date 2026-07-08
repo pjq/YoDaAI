@@ -8,6 +8,7 @@ struct ComposerView: View {
     @Environment(\.modelContext) private var modelContext
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject private var llmSettings = LLMSettings.shared
+    @ObservedObject private var piConfig = PiConfigStore.shared
     let thread: ChatThread
     let providers: [LLMProvider]
     @Binding var showModelPicker: Bool
@@ -18,6 +19,27 @@ struct ComposerView: View {
 
     private var defaultProvider: LLMProvider? {
         providers.first(where: { $0.isDefault }) ?? providers.first
+    }
+
+    /// Whether this thread uses the pi agent (project chats always do).
+    private var isPiChat: Bool {
+        viewModel.usesPiAgent(for: thread)
+    }
+
+    /// Model label to show in the chip.
+    private var modelLabel: String {
+        if isPiChat {
+            return piConfig.defaultModel.isEmpty ? "pi default" : piConfig.defaultModel
+        }
+        return defaultProvider?.selectedModel ?? "No model"
+    }
+
+    /// The pi working directory for this thread (project dir, else scratch).
+    private var piWorkingDirectory: URL {
+        if let dir = thread.project?.workingDirectory, !dir.isEmpty {
+            return URL(fileURLWithPath: dir)
+        }
+        return PiExecutable.scratchDirectory()
     }
 
     var body: some View {
@@ -117,14 +139,16 @@ struct ComposerView: View {
                         }
                     }
 
-                    // Model selector (clickable)
+                    // Model selector (clickable). pi chats show pi's model; direct
+                    // chats show the OpenAI-compatible provider model.
                     Button {
                         showModelPicker.toggle()
                     } label: {
                         HStack(spacing: 4) {
-                            Text("/")
+                            Image(systemName: isPiChat ? "cpu" : "slash.forward")
+                                .font(.system(size: 11 * scaleManager.scale))
                                 .foregroundStyle(.secondary)
-                            Text(defaultProvider?.selectedModel ?? "No model")
+                            Text(modelLabel)
                                 .foregroundStyle(.primary)
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.system(size: 10 * scaleManager.scale))
@@ -134,7 +158,11 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.borderless)
                     .popover(isPresented: $showModelPicker, arrowEdge: .top) {
-                        ModelPickerPopover(providers: providers)
+                        if isPiChat {
+                            PiModelPickerPopover(workingDirectory: piWorkingDirectory)
+                        } else {
+                            ModelPickerPopover(providers: providers)
+                        }
                     }
 
                     Spacer()

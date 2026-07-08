@@ -60,7 +60,16 @@ final class ChatViewModel: ObservableObject {
         self.accessibilityService = accessibilityService
         self.permissionsStore = permissionsStore
     }
-    
+
+    // MARK: - Agent Backend Selection
+
+    /// Whether a thread uses the pi agent. Project chats ALWAYS use pi (they need
+    /// a working directory the direct client can't provide); loose chats follow
+    /// the global `LLMSettings.usePiAgent` flag.
+    func usesPiAgent(for thread: ChatThread) -> Bool {
+        thread.project != nil || LLMSettings.shared.usePiAgent
+    }
+
     // MARK: - @ Mention Support
     
     /// Get list of running apps for @ mention picker
@@ -545,12 +554,12 @@ final class ChatViewModel: ObservableObject {
             history = history.filter { $0.createdAt < cutoff }
         }
 
-        // ---- pi agent path (feature-flagged) ----------------------------------
-        // When enabled, delegate the whole turn to the bundled pi agent, which
-        // owns the tool loop, MCP, and skills. We just create the assistant
-        // placeholder and mirror pi's event stream into it.
-        logger.log("usePiAgent flag = \(settings.usePiAgent)", level: .info, category: "Pi")
-        if settings.usePiAgent {
+        // ---- pi agent path ----------------------------------------------------
+        // Project chats ALWAYS use pi (they need a working directory to code in;
+        // the direct client can't do that). Loose chats follow the global flag.
+        let usePi = usesPiAgent(for: thread)
+        logger.log("usesPiAgent(for thread) = \(usePi) [project=\(thread.project != nil), flag=\(settings.usePiAgent)]", level: .info, category: "Pi")
+        if usePi {
             logger.log("Routing turn through pi agent path", level: .info, category: "Pi")
             try await generateViaPi(for: thread, provider: provider, history: history, in: context)
             return

@@ -240,3 +240,85 @@ struct ModelPickerPopover: View {
         try? modelContext.save()
     }
 }
+
+// MARK: - pi Model Picker Popover
+
+/// Lists the pi agent's available models and switches the active one. Used for
+/// pi chats (project chats + loose chats in pi mode) instead of the LLMProvider
+/// picker.
+struct PiModelPickerPopover: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var piConfig = PiConfigStore.shared
+    @Environment(\.appScaleManager) private var scaleManager
+    let workingDirectory: URL
+
+    @State private var models: [PiChatEngine.PiModel] = []
+    @State private var isLoading = true
+
+    private var currentID: String {
+        "\(piConfig.defaultProvider)/\(piConfig.defaultModel)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("pi Model")
+                .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
+                .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
+
+            Divider()
+
+            if isLoading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading models…").foregroundStyle(.secondary)
+                }
+                .font(.system(size: 12 * scaleManager.scale))
+                .padding(12)
+            } else if models.isEmpty {
+                Text("No models available. Check the pi Agent settings.")
+                    .font(.system(size: 12 * scaleManager.scale))
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(models) { model in
+                            Button {
+                                Task {
+                                    await PiChatEngine.shared.setModel(model, workingDirectory: workingDirectory)
+                                    dismiss()
+                                }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(model.name)
+                                            .font(.system(size: 14 * scaleManager.scale))
+                                        Text(model.provider)
+                                            .font(.system(size: 11 * scaleManager.scale))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if model.id == currentID {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(Color.accentColor)
+                                    }
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .background(model.id == currentID ? Color.accentColor.opacity(0.1) : Color.clear)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                .frame(maxHeight: 320)
+            }
+        }
+        .frame(width: 280)
+        .task {
+            models = await PiChatEngine.shared.availableModels(workingDirectory: workingDirectory)
+            isLoading = false
+        }
+    }
+}
