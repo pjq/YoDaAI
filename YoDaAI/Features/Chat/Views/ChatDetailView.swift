@@ -29,8 +29,12 @@ struct ChatDetailView: View {
 
                 Divider()
 
-                // Messages
+                // Messages. Keyed by thread.id so switching chats builds a FRESH
+                // list view — it then renders bottom-anchored from its first frame
+                // (defaultScrollAnchor) instead of reusing the old scroll position
+                // and visibly scrolling to the bottom.
                 MessageListView(thread: thread, viewModel: viewModel)
+                    .id(thread.id)
 
                 // Composer
                 ComposerView(
