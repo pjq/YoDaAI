@@ -254,9 +254,34 @@ struct PiModelPickerPopover: View {
 
     @State private var models: [PiChatEngine.PiModel] = []
     @State private var isLoading = true
+    @State private var search = ""
 
     private var currentID: String {
         "\(piConfig.defaultProvider)/\(piConfig.defaultModel)"
+    }
+
+    /// Provider keys defined in the user's models.json (their proxy/local servers).
+    private var customProviderKeys: Set<String> {
+        Set(piConfig.providers.map(\.key).filter { !$0.isEmpty })
+    }
+
+    /// Models to show: custom-provider (user-configured) models first, then the
+    /// built-ins, filtered by the search text.
+    private var filteredModels: [PiChatEngine.PiModel] {
+        let custom = customProviderKeys
+        let matched = models.filter { m in
+            search.isEmpty
+                || m.name.localizedCaseInsensitiveContains(search)
+                || m.modelId.localizedCaseInsensitiveContains(search)
+                || m.provider.localizedCaseInsensitiveContains(search)
+        }
+        return matched.sorted { a, b in
+            let aCustom = custom.contains(a.provider)
+            let bCustom = custom.contains(b.provider)
+            if aCustom != bCustom { return aCustom }       // custom providers first
+            if a.provider != b.provider { return a.provider < b.provider }
+            return a.name < b.name
+        }
     }
 
     var body: some View {
@@ -264,6 +289,15 @@ struct PiModelPickerPopover: View {
             Text("pi Model")
                 .font(.system(size: 14 * scaleManager.scale, weight: .semibold))
                 .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
+
+            // Search field
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search models", text: $search)
+                    .textFieldStyle(.plain)
+            }
+            .font(.system(size: 12 * scaleManager.scale))
+            .padding(.horizontal, 12).padding(.bottom, 8)
 
             Divider()
 
@@ -273,16 +307,17 @@ struct PiModelPickerPopover: View {
                     Text("Loading models…").foregroundStyle(.secondary)
                 }
                 .font(.system(size: 12 * scaleManager.scale))
-                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if models.isEmpty {
                 Text("No models available. Check the pi Agent settings.")
                     .font(.system(size: 12 * scaleManager.scale))
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(12)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(models) { model in
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(filteredModels) { model in
                             Button {
                                 Task {
                                     await PiChatEngine.shared.setModel(model, workingDirectory: workingDirectory)
@@ -292,7 +327,7 @@ struct PiModelPickerPopover: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(model.name)
-                                            .font(.system(size: 14 * scaleManager.scale))
+                                            .font(.system(size: 13 * scaleManager.scale))
                                         Text(model.provider)
                                             .font(.system(size: 11 * scaleManager.scale))
                                             .foregroundStyle(.secondary)
@@ -303,19 +338,18 @@ struct PiModelPickerPopover: View {
                                             .foregroundStyle(Color.accentColor)
                                     }
                                 }
-                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .padding(.horizontal, 12).padding(.vertical, 7)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .background(model.id == currentID ? Color.accentColor.opacity(0.1) : Color.clear)
+                            .background(model.id == currentID ? Color.accentColor.opacity(0.12) : Color.clear)
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
                 }
-                .frame(maxHeight: 320)
             }
         }
-        .frame(width: 280)
+        .frame(width: 320, height: 440)
         .task {
             models = await PiChatEngine.shared.availableModels(workingDirectory: workingDirectory)
             isLoading = false
