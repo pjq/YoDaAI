@@ -79,7 +79,7 @@ struct MessageListView: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 20)
-                    .padding(.bottom, 120)
+                    .padding(.bottom, 24)
                 }
                 .background(
                     ScrollPositionTrackerView(
@@ -128,10 +128,15 @@ struct MessageListView: View {
                         if newVal {
                             // Send just started: force at-bottom state and scroll
                             isAtBottom = true
-                            // Delay one frame so the new user message row is laid out
+                            // Scroll after layout settles. One async hop can fire
+                            // before the new (lazy) row is measured, landing in
+                            // blank space — so scroll again shortly after.
                             DispatchQueue.main.async {
-                                scrollToBottom(proxy: proxy, animated: true)
+                                scrollToBottom(proxy: proxy, animated: false)
                                 scrollTracker.startStreamingScroll()
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                scrollToBottom(proxy: proxy, animated: true)
                             }
                         } else {
                             // Sending finished
@@ -197,12 +202,17 @@ struct MessageListView: View {
     private var messages: [MessageDisplayData] { displayedMessages }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        // Scroll to the last real message (its bottom edge) rather than a trailing
+        // spacer past the bottom padding — scrolling to the spacer could land in
+        // blank space, especially with a LazyVStack whose off-screen rows haven't
+        // been measured yet. Fall back to the "bottom" anchor if the list is empty.
+        let target: AnyHashable = displayedMessages.last?.id ?? AnyHashable("bottom")
         if animated {
             withAnimation(.easeInOut(duration: 0.3)) {
-                proxy.scrollTo("bottom", anchor: .bottom)
+                proxy.scrollTo(target, anchor: .bottom)
             }
         } else {
-            proxy.scrollTo("bottom", anchor: .bottom)
+            proxy.scrollTo(target, anchor: .bottom)
         }
     }
 }
