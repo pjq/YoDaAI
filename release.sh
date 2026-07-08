@@ -60,9 +60,13 @@ print_info() {
     echo -e "${YELLOW}→ $1${NC}"
 }
 
-# Get current version from git tags
+# Get current version from git tags.
+# Use the HIGHEST semver tag, not the nearest-reachable one: after a squash merge
+# the PR base can predate later tags, so `git describe --tags` picks an older tag
+# and bumps compute a wrong/backwards version. Sort all v* tags by semver instead.
 get_current_version() {
-    local version=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+    local version=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+    version="${version:-v0.0.0}"
     echo "${version#v}"  # Remove 'v' prefix
 }
 
