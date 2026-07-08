@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>BuildDate</key>
-	<string>2026-07-03 11:10:43 UTC</string>
+	<string>2026-07-08 05:09:33 UTC</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.8.0</string>
+	<string>0.9.0</string>
 	<key>CFBundleVersion</key>
-	<string>171</string>
+	<string>186</string>
 	<key>CommitHash</key>
-	<string>36e5438</string>
+	<string>8713219</string>
 </dict>
 </plist>
