@@ -13,11 +13,28 @@ YoDaAI supports slash commands for quick actions in the chat interface.
 | `/settings` | Open settings | Opens the settings window (Cmd+,) |
 | `/copy` | Copy conversation | Copies the entire conversation to clipboard |
 
+`/clear` is also bound to **Cmd+L**.
+
+## Skills (pi agent)
+
+When the chat uses the **pi agent** (any project chat, or a loose chat with the pi
+agent enabled), the command menu also shows a **Skills** section listing the
+[Agent Skills](https://agentskills.io) pi discovered for that chat's working
+directory (global skills plus the project's own `.claude/skills`, `.pi/skills`,
+etc.).
+
+- Type `/` and pick a skill from the **Skills** section, or type `/skill:name`
+  directly.
+- Selecting a skill inserts `/skill:name ` into the composer; add arguments if
+  needed and press Return. pi expands the skill invocation when the prompt is sent.
+
 ## Usage
 
-1. **Type `/` in the chat input** - The command autocomplete popover will appear
-2. **Continue typing** to filter commands (e.g., `/he` shows only `/help`)
-3. **Click a command** or press Enter to execute it
+1. **Type `/` in the chat input** - The command autocomplete popover appears
+   (anchored above the composer's left edge)
+2. **Continue typing** to filter commands and skills (e.g., `/he` shows only
+   `/help`; `/android` narrows to matching skills)
+3. **Click a command/skill** or press Enter to execute/insert it
 4. **Press Escape** to dismiss the autocomplete
 
 ## Examples

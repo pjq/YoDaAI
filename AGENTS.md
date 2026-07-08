@@ -72,15 +72,17 @@ YoDaAI/
 │   │       ├── ImportExportSettingsView.swift
 │   │       ├── MCPServersSettingsView.swift
 │   │       ├── MCPSharedComponents.swift
-│   │       ├── SkillsSettingsView.swift    # pi skill discovery (read-only list)
+│   │       ├── PiSettingsView.swift         # pi config editor (settings/models.json)
+│   │       ├── SkillsSettingsView.swift     # pi skill discovery (gated on pi mode)
 │   │       └── PermissionsSettingsView.swift
 │   │
 │   ├── Pi/                             # pi agent integration
 │   │   ├── PiProtocol.swift           # Swift Codable model of pi's RPC protocol
-│   │   ├── PiAgentBridge.swift        # Spawn `pi --mode rpc`, JSONL framing, events
-│   │   ├── PiChatEngine.swift         # Mirror pi events → ChatMessage + tool UI
-│   │   ├── PiExecutable.swift         # Locate pi; scratch dir; login-shell env
-│   │   ├── PiSkillsConfig.swift       # Resolve skill directories to load
+│   │   ├── PiAgentBridge.swift        # Spawn `pi --mode rpc`, JSONL framing, beginTurn/endTurn
+│   │   ├── PiChatEngine.swift         # Mirror pi events → ChatMessage; models; skills
+│   │   ├── PiExecutable.swift         # Locate pi; scratch dir; async login-shell env
+│   │   ├── PiSkillsConfig.swift       # Resolve global + per-project skill directories
+│   │   ├── PiConfigStore.swift        # Read/write ~/.pi/agent settings.json + models.json
 │   │   └── ApprovalSheet.swift        # Native sheet for extension_ui_request dialogs
 │   │
 │   ├── Views/Components/               # Shared UI components
@@ -650,6 +652,9 @@ The UI follows the "Alter" app design (see `docs/refer/` screenshots):
    - Keep image operations on main thread if using `@MainActor` services like `ImageStorageService`
    - Monitor main thread blocking with Instruments if experiencing UI freezes
 7. **Info.plist Versioning**: The main target uses `GENERATE_INFOPLIST_FILE = NO` with a physical `YoDaAI/Info.plist`. Version, build number, commit hash, and build date are stamped by `release.sh`. The pbxproj `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` are stale defaults — do not rely on them.
+8. **pi launch must not block the main actor**: capturing the login-shell env (`PiExecutable.loginShellEnvironment()`) runs the user's shell (~seconds with a heavy `~/.zshrc`). It runs off-main and is cached — never make it synchronous on `@MainActor` or the UI freezes (ANR) on first pi launch.
+9. **pi event stream is single-consumer per turn**: `PiAgentBridge` exposes `beginTurn()`/`endTurn()`. Each `generate()` turn gets a fresh `AsyncStream`; the bridge finishes it on `agent_end`. Reusing/reassigning one continuation across turns orphans the previous consumer and hangs the next turn.
+10. **`release.sh` version detection**: `git describe --tags` is confused by the squash-merged history (PR base predates the 0.7.x tags), so `--type minor` can compute a wrong/older version. Pass `--version X.Y.Z` explicitly until fixed.
 
 ## Testing
 
@@ -663,10 +668,17 @@ xcodebuild -scheme YoDaAI -configuration Debug -destination 'platform=macOS' tes
 
 ## Keyboard Shortcuts
 
+Defined in `YoDaAIApp.swift` `.commands` (except Send, handled by the composer's
+`onKeyPress` in `ComposerView.swift`). Also surfaced read-only in
+Settings → General → Keyboard Shortcuts.
+
 | Shortcut | Action |
 |----------|--------|
-| Cmd+N | New chat |
-| Cmd+Return | Send message |
+| Cmd+N | New chat (loose, under "Chats") |
+| Cmd+L | Clear current chat (keeps the thread) |
+| Return | Send message |
+| Shift+Return | New line |
+| Cmd+ / Cmd- / Cmd0 | Increase / decrease / reset text size |
 | Cmd+, | Open settings (standard macOS) |
 
 ## Future Enhancements (Ideas)

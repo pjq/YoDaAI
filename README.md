@@ -94,27 +94,51 @@ To use the agentic coding backend instead of the direct client:
 
 ### Basic Chat
 
-1. Click "+" or press ⌘N to start a new chat
-2. Type your message and press ⌘Return to send
-3. The AI response will stream in real-time
+1. Click "+" or press ⌘N to start a new chat (appears under the **Chats** group)
+2. Type your message and press **Return** to send (**Shift+Return** for a new line)
+3. The AI response streams in real-time
+4. **⌘L** (or the eraser button in the header) clears the current chat's messages
+   while keeping the chat
+
+The sidebar groups conversations into **Projects** (directory-scoped, pi-powered)
+and **Chats** (loose conversations). ⌘N and the toolbar **+** create a loose chat;
+use a project's own **New chat** to create one inside that project.
 
 ### Projects (pi agent)
 
-The sidebar has a **Projects** section for directory-scoped agent work:
+The sidebar has a **Projects** section for directory-scoped agent work. **Project
+chats always use the pi agent** (regardless of the global toggle) since they need
+a working directory to code in:
 
 1. Click **+** next to "Projects" and choose a folder (e.g. a git repo)
 2. Start a chat inside that project — the pi agent runs with that folder as its
    working directory and can read, edit, and run commands there
-3. Loose chats (no project) run in a **contained scratch directory**
+3. The composer's model chip shows **pi's model** (with a `cpu` glyph); click it to
+   pick from pi's available models. Loose chats in pi mode also use this picker.
+4. Loose chats (no project) run in a **contained scratch directory**
    (`~/Library/Application Support/YoDaAI/chat-scratch`), **not** your home folder,
    so the agent can't touch your whole home directory by default
 
 ### Skills (pi agent)
 
 Settings → **Skills** shows the [Agent Skills](https://agentskills.io) pi has
-discovered. Add a skill by dropping its `SKILL.md` folder into `~/.claude/skills`,
-`~/.agents/skills`, or a project's `.claude/skills`, then click **Refresh**.
-Invoke a skill in chat with `/skill:name`.
+discovered (the tab is disabled when the pi agent is off). Add a skill by dropping
+its `SKILL.md` folder into `~/.claude/skills`, `~/.agents/skills`, a Claude Code
+plugin marketplace, or a project's `.claude/skills`, then click **Refresh**.
+
+- **Per-project skills load automatically** when you chat inside a project (from
+  its `.claude/skills`, `.pi/skills`, `.agents/skills`, and plugin marketplaces).
+- Invoke a skill by typing `/` in the composer and picking it from the **Skills**
+  section of the command menu, or type `/skill:name` directly.
+
+### pi Agent Settings
+
+Settings → **pi Agent** shows and edits pi's configuration (`~/.pi/agent/`):
+live status (active provider/model, binary path), **Defaults** (provider, model,
+thinking level, auto-compaction), **Custom Providers** (edit `models.json` — e.g. a
+local Ollama/LM Studio server or a proxy), and read-only **Credentials**. Edits are
+merged into pi's config (unknown keys preserved) with a backup, so they stay in
+sync with terminal pi.
 
 ### @ Mentions
 
@@ -134,13 +158,22 @@ Hover over any message to see action buttons:
 - **Retry** - Regenerate the AI response
 - **Delete** - Remove the message
 
+The chat **header** has a **Clear** (eraser) button that deletes all messages in
+the current chat while keeping the chat itself. Delete an entire chat from the
+sidebar (right-click → Delete).
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | ⌘N | New chat |
-| ⌘Return | Send message |
+| ⌘L | Clear current chat |
+| Return | Send message |
+| Shift+Return | New line |
+| ⌘+ / ⌘− / ⌘0 | Increase / decrease / reset text size |
 | ⌘, | Open settings |
+
+(Also listed in Settings → General → Keyboard Shortcuts.)
 
 ## Architecture
 
@@ -164,6 +197,7 @@ YoDaAI/
 │   ├── PiChatEngine.swift    # Mirrors pi events into ChatMessage + tool UI
 │   ├── PiExecutable.swift    # Locate pi binary; scratch dir; login-shell env
 │   ├── PiSkillsConfig.swift  # Resolve skill directories to load
+│   ├── PiConfigStore.swift   # Read/write ~/.pi/agent settings.json + models.json
 │   └── ApprovalSheet.swift   # Native sheet for pi extension_ui_request dialogs
 ├── Features/Chat/            # Chat UI components
 ├── Features/Sidebar/         # Sidebar thread list
