@@ -37,6 +37,21 @@ struct MessageRowView: View, Equatable {
         message.role == .assistant && streamingMessageID == message.id
     }
 
+    private var hasContent: Bool {
+        !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasToolCard: Bool {
+        toolExecutionState != nil && toolExecutionMessageID == message.id
+    }
+
+    /// An assistant message that finished with no text and no tool activity —
+    /// e.g. the agent produced no response. We show a subtle placeholder instead
+    /// of an empty row with floating action buttons.
+    private var isEmptyAssistantResult: Bool {
+        message.role == .assistant && !hasContent && !isStreaming && !hasToolCard
+    }
+
     var body: some View {
         HStack(alignment: .top) {
             if message.role == .user { Spacer(minLength: 60) }
@@ -49,18 +64,25 @@ struct MessageRowView: View, Equatable {
                     )
                 }
 
-                // Message bubble
-                messageBubble
+                if isEmptyAssistantResult {
+                    // No text and no tool activity: show a quiet placeholder with
+                    // just a retry affordance, instead of an empty row.
+                    emptyResultRow
+                } else {
+                    // Message bubble
+                    messageBubble
 
-                // Inline action toolbar (hidden while streaming)
-                if !isStreaming {
-                    actionToolbar
-                        .padding(.top, 2)
-                }
+                    // Inline action toolbar — only when there's something to act on
+                    // (real content or attachments) and not while streaming.
+                    if !isStreaming && (hasContent || hasAttachments) {
+                        actionToolbar
+                            .padding(.top, 2)
+                    }
 
-                // Tool execution card (assistant only)
-                if let state = toolExecutionState, toolExecutionMessageID == message.id {
-                    MCPToolExecutionCard(state: state).padding(.top, 4)
+                    // Tool execution card (assistant only)
+                    if let state = toolExecutionState, toolExecutionMessageID == message.id {
+                        MCPToolExecutionCard(state: state).padding(.top, 4)
+                    }
                 }
             }
 
@@ -129,6 +151,27 @@ struct MessageRowView: View, Equatable {
         if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             AssistantMessageContentView(content: message.content)
         }
+    }
+
+    // MARK: - Empty assistant result
+
+    private var emptyResultRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.bubble")
+                .foregroundStyle(.tertiary)
+            Text("No response")
+                .font(.system(size: 13 * scaleManager.scale))
+                .foregroundStyle(.secondary)
+            Button {
+                onRetry()
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12 * scaleManager.scale))
+            }
+            .buttonStyle(.borderless)
+            .disabled(isSending)
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Action toolbar (inline, flat style)
