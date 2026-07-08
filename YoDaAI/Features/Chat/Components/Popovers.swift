@@ -200,9 +200,8 @@ struct SlashCommandPickerPopover: View {
                     }
                 }
             }
-            .frame(maxHeight: 320)
         }
-        .frame(width: 320)
+        .frame(width: 340, height: 380)
     }
 
     private func selectCommand(_ command: SlashCommand) {

@@ -93,10 +93,14 @@ struct ComposerView: View {
                             return handleDrop(providers: providers)
                         }
                 }
-                .popover(isPresented: $viewModel.showMentionPicker, arrowEdge: .bottom) {
+                .popover(isPresented: $viewModel.showMentionPicker,
+                         attachmentAnchor: .point(.topLeading),
+                         arrowEdge: .bottom) {
                     MentionPickerPopover(viewModel: viewModel)
                 }
-                .popover(isPresented: $viewModel.showSlashCommandPicker, arrowEdge: .bottom) {
+                .popover(isPresented: $viewModel.showSlashCommandPicker,
+                         attachmentAnchor: .point(.topLeading),
+                         arrowEdge: .bottom) {
                     SlashCommandPickerPopover(viewModel: viewModel)
                 }
 
