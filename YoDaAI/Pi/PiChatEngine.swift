@@ -236,6 +236,30 @@ final class PiChatEngine {
         }
     }
 
+    /// Query pi's live state for a short "Provider · Model" description. Uses a
+    /// short-lived bridge (like discoverCommands). Returns "" if unavailable.
+    func activeModelDescription(workingDirectory: URL, provider: LLMProvider) async -> String {
+        guard let resolved = PiExecutable.resolve() else { return "" }
+        var config = PiLaunchConfig(
+            executableURL: resolved.executable,
+            interpreterURL: resolved.interpreter,
+            workingDirectory: workingDirectory)
+        config.noSession = true
+        config.extraEnvironment = PiExecutable.loginShellEnvironment
+        let bridge = PiAgentBridge(config: config)
+        do { try await bridge.start() } catch { return "" }
+        defer { Task { await bridge.stop() } }
+
+        guard let response = try? await bridge.request({ id in .getState(id: id) }),
+              case .response(_, _, let success, _, let data) = response, success,
+              let model = data?["model"] else {
+            return ""
+        }
+        let name = model["name"]?.stringValue ?? model["id"]?.stringValue ?? "unknown"
+        let prov = model["provider"]?.stringValue
+        return prov.map { "\($0) · \(name)" } ?? name
+    }
+
     /// Extract a text preview from a tool result content array.
     private static func previewText(from result: JSONValue?) -> String {
         guard let content = result?["content"]?.arrayValue else {

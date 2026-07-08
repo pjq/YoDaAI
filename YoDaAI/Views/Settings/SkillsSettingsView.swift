@@ -12,6 +12,7 @@ import SwiftUI
 import SwiftData
 
 struct SkillsSettingsView: View {
+    @ObservedObject private var llmSettings = LLMSettings.shared
     @Query(sort: [SortDescriptor(\LLMProvider.updatedAt, order: .reverse)])
     private var providers: [LLMProvider]
 
@@ -29,6 +30,23 @@ struct SkillsSettingsView: View {
 
     var body: some View {
         Form {
+            if !llmSettings.usePiAgent {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Skills require the pi agent", systemImage: "exclamationmark.triangle")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.orange)
+                        Text("Skills are a pi-agent capability. The direct OpenAI-compatible client does not use them. Enable the pi agent to discover and run skills.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Enable pi agent") { llmSettings.usePiAgent = true }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
             Section {
                 Text("Skills are self-contained capability packages the agent loads on demand. They are discovered by the pi agent from the directories below. Add a skill by placing its folder (with a SKILL.md) into one of these directories.")
                     .font(.callout)
@@ -66,7 +84,11 @@ struct SkillsSettingsView: View {
             }
 
             Section {
-                if isLoading {
+                if !llmSettings.usePiAgent {
+                    Text("Enable the pi agent to discover skills.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if isLoading {
                     HStack { ProgressView().controlSize(.small); Text("Discovering skills…").foregroundStyle(.secondary) }
                 } else if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -105,7 +127,7 @@ struct SkillsSettingsView: View {
                     Spacer()
                     Button("Refresh") { Task { await refresh() } }
                         .controlSize(.small)
-                        .disabled(isLoading)
+                        .disabled(isLoading || !llmSettings.usePiAgent)
                 }
             }
         }
@@ -115,6 +137,7 @@ struct SkillsSettingsView: View {
 
     @MainActor
     private func refresh() async {
+        guard llmSettings.usePiAgent else { skills = []; return }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }

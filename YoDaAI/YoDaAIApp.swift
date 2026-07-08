@@ -292,6 +292,8 @@ struct AppSettingsView: View {
                     AppearanceSettingsView()
                 case .apiKeys:
                     APIKeysSettingsView()
+                case .piAgent:
+                    PiSettingsView()
                 case .skills:
                     SkillsSettingsView()
                 case .mcpServers:
@@ -335,7 +337,14 @@ struct SettingsTabBar: View {
                 icon: "key",
                 title: "API Keys"
             )
-            
+
+            SettingsTabButton(
+                tab: .piAgent,
+                selectedTab: $selectedTab,
+                icon: "cpu",
+                title: "pi Agent"
+            )
+
             SettingsTabButton(
                 tab: .skills,
                 selectedTab: $selectedTab,

@@ -99,7 +99,7 @@ nonisolated enum PiStreamingBehavior: String, Codable, Sendable {
     case followUp
 }
 
-nonisolated enum PiThinkingLevel: String, Codable, Sendable {
+nonisolated enum PiThinkingLevel: String, Codable, Sendable, CaseIterable {
     case off, minimal, low, medium, high, xhigh
 }
 
