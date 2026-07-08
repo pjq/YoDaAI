@@ -94,7 +94,9 @@ actor PiAgentBridge {
     /// Pending id-correlated command responses.
     private var pending: [String: CheckedContinuation<PiInbound, Error>] = [:]
 
-    /// Event broadcast to consumers (everything that's not an id-matched response).
+    /// Continuation for the CURRENT turn's event stream. Each turn gets a fresh
+    /// stream (an AsyncStream supports only one consumer), so the bridge routes
+    /// events to whichever turn is active and finishes it on agent_end.
     private var eventContinuation: AsyncStream<PiInbound>.Continuation?
     /// Captured stderr text for diagnostics.
     private(set) var stderrText: String = ""
@@ -108,12 +110,22 @@ actor PiAgentBridge {
         self.config = config
     }
 
-    /// The stream of non-response events (agent_start, message_update, tool_*, …).
-    /// Create it before or after start(); events are delivered as they arrive.
-    func events() -> AsyncStream<PiInbound> {
-        AsyncStream { continuation in
+    /// Begin a turn: returns a fresh single-consumer event stream and registers it
+    /// as the active turn. Any previous turn's continuation is finished first so we
+    /// never leave two live consumers (which would hang). The bridge finishes this
+    /// stream when the turn ends (agent_end handled by the caller, or on stop).
+    func beginTurn() -> AsyncStream<PiInbound> {
+        eventContinuation?.finish()
+        return AsyncStream<PiInbound> { continuation in
             self.eventContinuation = continuation
         }
+    }
+
+    /// End the current turn's event stream (call after agent_end so the caller's
+    /// `for await` loop terminates cleanly and the next turn starts fresh).
+    func endTurn() {
+        eventContinuation?.finish()
+        eventContinuation = nil
     }
 
     /// Launch the pi process. Idempotent-safe: throws if already running.

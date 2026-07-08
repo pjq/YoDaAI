@@ -73,7 +73,7 @@ final class PiChatEngine {
         // GUI apps don't inherit the shell environment, so pi's config that
         // references "$OPENAI_API_KEY" etc. would fail with "No API key found".
         // Feed pi the user's login-shell environment.
-        config.extraEnvironment = PiExecutable.loginShellEnvironment
+        config.extraEnvironment = await PiExecutable.loginShellEnvironment()
 
         // Load skills from ~/.claude/skills, ~/.agents/skills, and the project's
         // .claude/skills (the last requires project trust in RPC mode).
@@ -111,7 +111,9 @@ final class PiChatEngine {
                   provider: LLMProvider,
                   callbacks: PiChatCallbacks) async throws {
         let bridge = try await bridge(for: workingDirectory, provider: provider)
-        let events = await bridge.events()
+        // Fresh single-consumer stream for this turn (survives across turns via
+        // beginTurn/endTurn on the bridge — avoids the multi-turn consumer hang).
+        let events = await bridge.beginTurn()
 
         // Accept the prompt. pi returns a response ack, then streams events.
         try await bridge.send(.prompt(prompt, images: images.isEmpty ? nil : images))
@@ -176,10 +178,12 @@ final class PiChatEngine {
                 flush(force: true)
                 callbacks.setToolState(nil)
                 callbacks.save()
+                await bridge.endTurn()   // terminate this turn's stream cleanly
                 return
 
             case .response(_, let command, let success, let error, _):
                 if !success, command == "prompt", let error {
+                    await bridge.endTurn()
                     throw PiChatError.unavailable(error)
                 }
 
@@ -224,7 +228,7 @@ final class PiChatEngine {
                 interpreterURL: resolved.interpreter,
                 workingDirectory: workingDirectory)
             config.noSession = true
-            config.extraEnvironment = PiExecutable.loginShellEnvironment
+            config.extraEnvironment = await PiExecutable.loginShellEnvironment()
             let skills = PiSkillsConfig.skillPaths(for: workingDirectory)
             config.skillPaths = skills.paths
             config.approveProjectTrust = skills.needsApprove
@@ -257,7 +261,7 @@ final class PiChatEngine {
             interpreterURL: resolved.interpreter,
             workingDirectory: workingDirectory)
         config.noSession = true
-        config.extraEnvironment = PiExecutable.loginShellEnvironment
+        config.extraEnvironment = await PiExecutable.loginShellEnvironment()
         let bridge = PiAgentBridge(config: config)
         do { try await bridge.start() } catch { return "" }
         defer { Task { await bridge.stop() } }
@@ -288,7 +292,7 @@ final class PiChatEngine {
             interpreterURL: resolved.interpreter,
             workingDirectory: workingDirectory)
         config.noSession = true
-        config.extraEnvironment = PiExecutable.loginShellEnvironment
+        config.extraEnvironment = await PiExecutable.loginShellEnvironment()
         let bridge = PiAgentBridge(config: config)
         do { try await bridge.start() } catch { return [] }
         defer { Task { await bridge.stop() } }

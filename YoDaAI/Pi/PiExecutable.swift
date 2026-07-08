@@ -67,7 +67,30 @@ enum PiExecutable {
     /// references as "$OPENAI_API_KEY") are missing. Capture the login shell's
     /// environment once and cache it, so the spawned pi sees the same env the
     /// user gets in a terminal.
-    static let loginShellEnvironment: [String: String] = {
+    /// Cached login-shell environment. Populated once, off the main thread.
+    private static let envCache = LoginEnvCache()
+
+    private actor LoginEnvCache {
+        private var value: [String: String]?
+        func get() -> [String: String]? { value }
+        func set(_ v: [String: String]) { value = v }
+    }
+
+    /// The user's login-shell environment (so pi sees $OPENAI_API_KEY etc.).
+    /// Running the login shell is SLOW (several seconds with a heavy ~/.zshrc), so
+    /// this MUST run off the main thread — computing it on @MainActor froze the UI
+    /// on first pi launch. Cached after the first computation.
+    static func loginShellEnvironment() async -> [String: String] {
+        if let cached = await envCache.get() { return cached }
+        let env = await Task.detached(priority: .userInitiated) {
+            computeLoginShellEnvironment()
+        }.value
+        await envCache.set(env)
+        return env
+    }
+
+    /// Blocking login-shell env capture. Never call on the main thread.
+    nonisolated static func computeLoginShellEnvironment() -> [String: String] {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: shell)
@@ -94,7 +117,7 @@ enum PiExecutable {
         } catch {
             return [:]
         }
-    }()
+    }
 
     /// Minimal `which`: probe common locations and $PATH.
     private static func which(_ name: String) -> URL? {
