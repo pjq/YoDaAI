@@ -40,6 +40,17 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Keyboard Shortcuts") {
+                shortcutRow("New Chat", keys: "⌘N")
+                shortcutRow("Clear Chat", keys: "⌘L")
+                shortcutRow("Send Message", keys: "↵")
+                shortcutRow("New Line", keys: "⇧↵")
+                shortcutRow("Increase Text Size", keys: "⌘+")
+                shortcutRow("Decrease Text Size", keys: "⌘−")
+                shortcutRow("Actual Text Size", keys: "⌘0")
+                shortcutRow("Settings", keys: "⌘,")
+            }
+
             Section("Agent Backend") {
                 Toggle("Use pi agent (experimental)", isOn: $llmSettings.usePiAgent)
                 Text("Route chat through the bundled pi agent (owns the tool loop, MCP, and skills). When off, YoDaAI uses the direct OpenAI-compatible client.")
@@ -295,6 +306,15 @@ struct GeneralSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove all cached app content.")
+        }
+    }
+
+    /// A read-only row showing an action and its keyboard shortcut.
+    private func shortcutRow(_ action: String, keys: String) -> some View {
+        LabeledContent(action) {
+            Text(keys)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.secondary)
         }
     }
 }
