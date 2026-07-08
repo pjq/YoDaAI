@@ -147,7 +147,7 @@ struct MessageListView: View {
                 .onAppear {
                     Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                        jumpToBottom(proxy: proxy)
                     }
                 }
                 // Messages cleared (header Clear button or /clear) → reload the cache.
@@ -164,7 +164,9 @@ struct MessageListView: View {
                     showScrollToBottom = false
                     Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                        // Jump to the newest message with NO animation so switching
+                        // chats appears already-at-bottom rather than visibly scrolling.
+                        jumpToBottom(proxy: proxy)
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshMessages"))) { _ in
@@ -200,6 +202,17 @@ struct MessageListView: View {
     }
 
     private var messages: [MessageDisplayData] { displayedMessages }
+
+    /// Instantly position at the newest message with NO animation. Used when
+    /// opening/switching chats so the view appears already at the bottom instead
+    /// of visibly scrolling. Re-asserts once after layout for lazy rows.
+    private func jumpToBottom(proxy: ScrollViewProxy) {
+        let target: AnyHashable = displayedMessages.last?.id ?? AnyHashable("bottom")
+        proxy.scrollTo(target, anchor: .bottom)
+        DispatchQueue.main.async {
+            proxy.scrollTo(target, anchor: .bottom)
+        }
+    }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
         // Scroll to the last real message (its bottom edge) rather than a trailing
