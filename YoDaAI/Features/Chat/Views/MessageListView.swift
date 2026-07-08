@@ -31,8 +31,19 @@ struct MessageListView: View {
     let thread: ChatThread
     @ObservedObject var viewModel: ChatViewModel
 
-    @State private var displayedMessages: [MessageDisplayData] = []
+    @State private var displayedMessages: [MessageDisplayData]
     @State private var updateTask: Task<Void, Never>?
+
+    init(thread: ChatThread, viewModel: ChatViewModel) {
+        self.thread = thread
+        self.viewModel = viewModel
+        // Seed the messages SYNCHRONOUSLY so the list is fully populated on the
+        // very first render. Loading async (starting from []) made the list grow
+        // from empty → full after paint, causing a visible scroll into position
+        // (and inconsistent final positions). With defaultScrollAnchor(.bottom)
+        // + a full first frame, the chat simply appears at the bottom.
+        _displayedMessages = State(initialValue: MessageDisplayData.loadMessages(from: thread))
+    }
 
     /// True when the user is at (or very near) the bottom of the scroll view.
     /// Only auto-scroll for new content when this is true.
@@ -149,13 +160,10 @@ struct MessageListView: View {
                         }
                     }
                 }
-                .onAppear {
-                    Task { @MainActor in
-                        // defaultScrollAnchor(.bottom) positions at the newest
-                        // message on first paint — no programmatic scroll needed.
-                        displayedMessages = MessageDisplayData.loadMessages(from: thread)
-                    }
-                }
+                // No onAppear reload: displayedMessages is seeded synchronously in
+                // init(), so the list is complete on the first frame and
+                // defaultScrollAnchor(.bottom) pins it to the newest message with
+                // no visible scroll. Reloading here would trigger a relayout.
                 // Messages cleared (header Clear button or /clear) → reload the cache.
                 .onChange(of: viewModel.messagesReloadToken) { _, _ in
                     updateTask?.cancel()
@@ -163,18 +171,9 @@ struct MessageListView: View {
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
                     }
                 }
-                .onChange(of: thread.id) { _, _ in
-                    updateTask?.cancel()
-                    scrollTracker.stopStreamingScroll()
-                    isAtBottom = true
-                    showScrollToBottom = false
-                    Task { @MainActor in
-                        // Reloading the messages re-lays out the list; with
-                        // defaultScrollAnchor(.bottom) it re-pins to the newest
-                        // message with no visible scroll.
-                        displayedMessages = MessageDisplayData.loadMessages(from: thread)
-                    }
-                }
+                // Note: switching chats recreates this view via .id(thread.id) in
+                // ChatDetailView, so there's no thread.id onChange to handle here —
+                // the fresh view seeds messages in init() and renders at the bottom.
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RefreshMessages"))) { _ in
                     Task { @MainActor in
                         displayedMessages = MessageDisplayData.loadMessages(from: thread)
