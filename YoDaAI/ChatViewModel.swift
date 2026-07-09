@@ -651,9 +651,11 @@ final class ChatViewModel: ObservableObject {
             }
         }
 
-        // Also add frontmost app context if enabled (and not already mentioned)
+        // Also add frontmost app context if enabled (and not already mentioned).
+        // Use promptIfNeeded: false so we don't trigger the Accessibility permission
+        // dialog on every send — if the user hasn't granted it, just skip silently.
         if LLMSettings.shared.alwaysAttachAppContext {
-            let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: true)
+            let snapshot = accessibilityService.captureFrontmostContext(promptIfNeeded: false)
 
             if let snapshot {
                 // Skip if this app was already mentioned
