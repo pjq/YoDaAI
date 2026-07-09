@@ -31,18 +31,16 @@ struct MessageListView: View {
     let thread: ChatThread
     @ObservedObject var viewModel: ChatViewModel
 
-    @State private var displayedMessages: [MessageDisplayData]
+    @State private var displayedMessages: [MessageDisplayData] = []
     @State private var updateTask: Task<Void, Never>?
 
     init(thread: ChatThread, viewModel: ChatViewModel) {
         self.thread = thread
         self.viewModel = viewModel
-        // Seed the messages SYNCHRONOUSLY so the list is fully populated on the
-        // very first render. Loading async (starting from []) made the list grow
-        // from empty → full after paint, causing a visible scroll into position
-        // (and inconsistent final positions). With defaultScrollAnchor(.bottom)
-        // + a full first frame, the chat simply appears at the bottom.
-        _displayedMessages = State(initialValue: MessageDisplayData.loadMessages(from: thread))
+        // Start empty — messages load on the first frame via .task below.
+        // Combined with defaultScrollAnchor(.bottom) + .id(thread.id), the list
+        // renders at the bottom once content arrives. Loading synchronously here
+        // caused ANR on threads with many messages (SwiftData relationship faults).
     }
 
     /// True when the user is at (or very near) the bottom of the scroll view.
@@ -160,10 +158,13 @@ struct MessageListView: View {
                         }
                     }
                 }
-                // No onAppear reload: displayedMessages is seeded synchronously in
-                // init(), so the list is complete on the first frame and
-                // defaultScrollAnchor(.bottom) pins it to the newest message with
-                // no visible scroll. Reloading here would trigger a relayout.
+                // Load messages on first frame. Combined with
+                // defaultScrollAnchor(.bottom) + .id(thread.id), content appears at
+                // the bottom without visible scroll. Uses .task (tied to view identity)
+                // so it fires once per fresh view creation.
+                .task {
+                    displayedMessages = MessageDisplayData.loadMessages(from: thread)
+                }
                 // Messages cleared (header Clear button or /clear) → reload the cache.
                 .onChange(of: viewModel.messagesReloadToken) { _, _ in
                     updateTask?.cancel()
