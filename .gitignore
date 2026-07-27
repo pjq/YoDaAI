@@ -6,6 +6,12 @@ xcuserdata/
 # Build artifacts
 *.o
 *.d
+*.bak
+*.bak2
+*.profraw
+
+# Release artifacts (uploaded to GitHub, not committed)
+releases/
 
 # macOS
 .DS_Store
